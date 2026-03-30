@@ -47,6 +47,27 @@ export default function Home() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const handleUpload = async () => {
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const response = await fetch("http://127.0.0.1:8000/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+    console.log(data);
+    alert("Upload successful: " + data.filename);
+  } catch (error) {
+    console.error(error);
+    alert("Upload failed");
+  }
+};
+
   const capitalisedTab = activeTab.charAt(0).toUpperCase() + activeTab.slice(1)
 
   const renderPreview = () => {
@@ -188,6 +209,7 @@ export default function Home() {
           </div>
 
           <button
+            onClick={handleUpload}
             disabled={!file}
             className={`w-full py-3 rounded-xl font-semibold tracking-wide transition-all duration-200 ${
               file
