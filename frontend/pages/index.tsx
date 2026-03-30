@@ -18,6 +18,50 @@ export default function Home() {
     audio: 'audio/wav,audio/mpeg,audio/flac'
   }
 
+    const ImageIcon = () => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="w-5 h-5"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="9" cy="10" r="1.5" />
+      <path d="M21 16l-5-5-4 4-2-2-4 4" />
+    </svg>
+  )
+
+  const VideoIcon = () => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="w-5 h-5"
+    >
+      <rect x="3" y="6" width="13" height="12" rx="2" />
+      <path d="M16 10l5-3v10l-5-3z" />
+    </svg>
+  )
+
+  const AudioIcon = () => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="w-5 h-5"
+    >
+      <path d="M11 5L6 9H3v6h3l5 4V5z" />
+      <path d="M15.5 8.5a5 5 0 010 7" />
+      <path d="M18 6a8 8 0 010 12" />
+    </svg>
+  )
+
   useEffect(() => {
     if (!file) {
       setPreview(null)
@@ -224,9 +268,9 @@ export default function Home() {
         {/* RIGHT: feature cards */}
         <div className="flex flex-col gap-4">
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-blue-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center shrink-0">
-              insert image here
-            </div>    
+<div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
+  <ImageIcon />
+</div>  
             <div>
               <h3 className="text-sm font-bold text-white">Image Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">
@@ -237,9 +281,9 @@ export default function Home() {
           </div>
 
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-purple-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 text-lg shrink-0">
-            insert image here
-            </div>
+<div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 shrink-0">
+  <VideoIcon />
+</div>
             <div>
               <h3 className="text-sm font-bold text-white">Video Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">
@@ -250,9 +294,9 @@ export default function Home() {
           </div>
 
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-amber-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 text-lg shrink-0">
-            insert image here
-            </div>
+<div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 shrink-0">
+  <AudioIcon />
+</div>
             <div>
               <h3 className="text-sm font-bold text-white">Audio Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">
