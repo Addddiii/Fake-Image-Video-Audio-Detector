@@ -6,6 +6,19 @@ import io
 import os
 import glob
 import torch
+from pathlib import Path
+
+# =========================
+# CONFIG
+# =========================
+IMG_SIZE = (224, 224)
+
+patch_pipline = transforms.Compose([
+    transforms.Resize(IMG_SIZE),
+    transforms.ToTensor(),
+    transforms.Normalize([0.5, 0.5, 0.5],
+                         [0.5, 0.5, 0.5])
+])
 
 def image_processor(image_file):
     """in back end when an image gets uploaded we might primarely only use this function
@@ -14,74 +27,99 @@ def image_processor(image_file):
     try:
         pil_image = Image.open(image_file).convert('RGB')
     except Exception as e:
-        print("Failed to load image: {e}")
+        print(f"Failed to load image: {e}")
         return None, None
-    # STEP 2: we turn the image into randomly cropped 256*256 size images preserving original resolution and pass it on as a tensor
-    patch_pipline = transforms.Compose([
-        transforms.RandomCrop((256,256)),
-        transforms.ToTensor(),
-    ])
 
-    # now First stream can be sent to the first neural net to check the spatial data(shold look for stuff like unnatural lighting, weird textures, etc.)
+    # STEP 2: resize image to 224x224 and convert to tensor
     spatial_tensor_patch = patch_pipline(pil_image)
 
     # STEP 3: now we use openCV to extract frequency data from the image
-    open_cv_array = np.array(pil_image) #image -->numpy matrix
-    gray_image = cv2.cvtColor(open_cv_array, cv2.COLOR_RGB2GRAY) #numpy matrix --> grayscale
+    open_cv_array = np.array(pil_image.resize(IMG_SIZE))
+    gray_image = cv2.cvtColor(open_cv_array, cv2.COLOR_RGB2GRAY)
     
-    #calculate first frontier transform
     f_transform = np.fft.fft2(gray_image)
     f_shift = np.fft.fftshift(f_transform)
 
-    #calculate magnitude spectrum
     frequency_spectrum = 20*np.log(np.abs(f_shift)+ 1e-8)
 
-    #now second stream can be sent to the second neural net
+    # normalize frequency spectrum
+    frequency_spectrum = frequency_spectrum.astype(np.float32)
+    min_val = frequency_spectrum.min()
+    max_val = frequency_spectrum.max()
+    if max_val > min_val:
+        frequency_spectrum = (frequency_spectrum - min_val) / (max_val - min_val)
+    else:
+        frequency_spectrum = np.zeros_like(frequency_spectrum, dtype=np.float32)
+
     return spatial_tensor_patch, frequency_spectrum
 
-# spatial_data, frequency_data = image_processor("preprocess_scripts/uwp3723310.jpeg")
-# print(spatial_data)
-def folder_processor(folder_path):
-    print("scanning folder...")
 
-    spatial_list = []
-    frequency_list = []
-    valid_files = []
+def folder_processor(folder_path, output_folder):
+    print(f"\nScanning folder: {folder_path}")
 
     search_patterns = ['*.jpg', '*.jpeg', '*.png', '*.webp']
     image_files = []
 
     for pattern in search_patterns:
-        image_files.extend(glob.glob(os.path.join(folder_path, pattern)))
-    if not image_files:
-        print("no valid images found")
-        return None, None
-    for img in image_files:
-        with open(img, 'rb') as file_stream: #rb means read binary data
-            spatial_patch, frequency_spectrum = image_processor(file_stream) # we pass a file stream 
+        image_files.extend(glob.glob(os.path.join(folder_path, "**", pattern), recursive=True))
+
+    total = len(image_files)
+
+    if total == 0:
+        print("No valid images found")
+        return
+
+    print(f"Total images found: {total}")
+    print("Starting processing...\n")
+
+    for i, img in enumerate(image_files):
+        with open(img, 'rb') as file_stream:
+            spatial_patch, frequency_spectrum = image_processor(file_stream)
+
             if spatial_patch is not None and frequency_spectrum is not None:
-                spatial_list.append(spatial_patch)
-
                 frequency_tensor = torch.tensor(frequency_spectrum, dtype = torch.float32).unsqueeze(0)
-                frequency_list.append(frequency_tensor)
-                valid_files.append(os.path.basename(img))
-                print(f"processed: {os.path.basename(img)}")
+
+                file_name = Path(img).stem + ".pt"
+                save_path = os.path.join(output_folder, file_name)
+
+                os.makedirs(output_folder, exist_ok=True)
+
+                torch.save({
+                    "spatial_tensor": spatial_patch,
+                    "frequency_tensor": frequency_tensor,
+                    "original_file": img
+                }, save_path)
+
+                # Progress info
+                percent = ((i+1) / total) * 100
+                print(f"[{i+1}/{total}] {percent:.1f}% - processed: {file_name}")
+
             else:
-                print(f"failed: {os.path.basename(img)}")
-    
-    spatial_batch = torch.stack(spatial_list) #we stack the data as the neural net will be running on gps and should be able to use multiple groups of data to learn
-    frequency_batch = torch.stack(frequency_list)
+                print(f"Failed: {os.path.basename(img)}")
 
-    print("proces complete")
-    print(spatial_batch.shape)
-    print(frequency_batch.shape)
-
-    return spatial_batch, frequency_batch
-
-spatial_batch, freq_batch = folder_processor("<ENTER FOLDER PATH>")
-
-    
-    
+    print(f"\nFinished folder: {folder_path}")
 
 
-    
+# =========================
+# RUN FOR FULL DATASET
+# =========================
+RAW_ROOT = r"D:\FakeDetection\raw_datasets\image"
+OUT_ROOT = r"D:\FakeDetection\processed_datasets\image_tensors"
+
+splits = ["train", "eval", "test"]
+classes = ["real", "fake"]
+
+for split in splits:
+    for cls in classes:
+        in_folder = os.path.join(RAW_ROOT, split, cls)
+        out_folder = os.path.join(OUT_ROOT, split, cls)
+
+        if os.path.exists(in_folder):
+            print(f"\n==============================")
+            print(f"Processing {split}/{cls}")
+            print(f"==============================")
+            folder_processor(in_folder, out_folder)
+        else:
+            print(f"Missing folder: {in_folder}")
+
+print("\nAll image preprocessing done.")
