@@ -42,6 +42,45 @@ def image_processor(image_file):
 # spatial_data, frequency_data = image_processor("preprocess_scripts/uwp3723310.jpeg")
 # print(spatial_data)
 def folder_processor(folder_path):
+    print("scanning folder...")
+
+    spatial_list = []
+    frequency_list = []
+    valid_files = []
+
+    search_patterns = ['*.jpg', '*.jpeg', '*.png', '*.webp']
+    image_files = []
+
+    for pattern in search_patterns:
+        image_files.extend(glob.glob(os.path.join(folder_path, pattern)))
+    if not image_files:
+        print("no valid images found")
+        return None, None
+    for img in image_files:
+        with open(img, 'rb') as file_stream: #rb means read binary data
+            spatial_patch, frequency_spectrum = image_processor(file_stream) # we pass a file stream 
+            if spatial_patch is not None and frequency_spectrum is not None:
+                spatial_list.append(spatial_patch)
+
+                frequency_tensor = torch.tensor(frequency_spectrum, dtype = torch.float32).unsqueeze(0)
+                frequency_list.append(frequency_tensor)
+                valid_files.append(os.path.basename(img))
+                print(f"processed: {os.path.basename(img)}")
+            else:
+                print(f"failed: {os.path.basename(img)}")
+    
+    spatial_batch = torch.stack(spatial_list) #we stack the data as the neural net will be running on gps and should be able to use multiple groups of data to learn
+    frequency_batch = torch.stack(frequency_list)
+
+    print("proces complete")
+    print(spatial_batch.shape)
+    print(frequency_batch.shape)
+
+    return spatial_batch, frequency_batch
+
+spatial_batch, freq_batch = folder_processor("./preprocess_scripts/imgs")
+
+    
     
 
 
