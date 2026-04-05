@@ -78,7 +78,7 @@ def folder_processor(folder_path):
 
     return spatial_batch, frequency_batch
 
-spatial_batch, freq_batch = folder_processor("./preprocess_scripts/imgs")
+spatial_batch, freq_batch = folder_processor("<ENTER FOLDER PATH>")
 
     
     
