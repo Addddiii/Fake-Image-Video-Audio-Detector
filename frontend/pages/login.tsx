@@ -1,7 +1,11 @@
 import Link from 'next/link'
 import { useRouter } from 'next/router'
-import { FormEvent, useState } from 'react'
-import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth'
+import { FormEvent, useEffect, useState } from 'react'
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup
+} from 'firebase/auth'
 import Navbar from '@/components/Navbar'
 import {
   auth,
@@ -10,6 +14,25 @@ import {
   hasFirebaseConfig
 } from '@/utils/firebase'
 
+function getLoginErrorMessage(error: any) {
+  switch (error?.code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+      return 'Incorrect email or password.'
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.'
+    case 'auth/network-request-failed':
+      return 'Network error. Please check your internet connection and try again.'
+    case 'auth/popup-closed-by-user':
+      return 'The sign-in popup was closed before finishing.'
+    case 'auth/cancelled-popup-request':
+      return 'Another sign-in popup is already open.'
+    default:
+      return 'Login failed. Please try again.'
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -17,6 +40,21 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const signupSuccess = router.query.signup === 'success'
+  const logoutSuccess = router.query.logout === 'success'
+
+  useEffect(() => {
+    if (!auth) return
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        router.replace('/')
+      }
+    })
+
+    return unsubscribe
+  }, [router])
 
   const handleEmailLogin = async (e: FormEvent) => {
     e.preventDefault()
@@ -34,7 +72,7 @@ export default function LoginPage() {
       await signInWithEmailAndPassword(firebaseAuth, email, password)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || 'Login failed.')
+      setError(getLoginErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -55,7 +93,7 @@ export default function LoginPage() {
       await signInWithPopup(firebaseAuth, googleProvider)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || 'Google login failed.')
+      setError(getLoginErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -76,7 +114,7 @@ export default function LoginPage() {
       await signInWithPopup(firebaseAuth, facebookProvider)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || 'Facebook login failed.')
+      setError(getLoginErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -98,6 +136,18 @@ export default function LoginPage() {
           <p className="text-slate-400 mt-3 text-sm leading-relaxed">
             Sign in with your email and password, or continue with Google or Facebook.
           </p>
+
+          {signupSuccess && (
+            <p className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+              Account created successfully. Please log in.
+            </p>
+          )}
+
+          {logoutSuccess && (
+            <p className="mt-4 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-300">
+              Logged out successfully.
+            </p>
+          )}
 
           <form onSubmit={handleEmailLogin} className="mt-6 flex flex-col gap-4">
             <div>
