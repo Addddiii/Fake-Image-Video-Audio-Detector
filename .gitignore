@@ -220,3 +220,11 @@ yarn-error.log*
 # OS files
 Thumbs.db
 .DS_Store
+
+# Firebase credentials (NEVER commit these!)
+*firebase-credentials.json
+firebase-credentials*.json
+
+# Uploaded files (user data)
+uploads/
+backend/uploads/
