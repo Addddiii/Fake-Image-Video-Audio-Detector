@@ -1,0 +1,12 @@
+# Core web framework
+fastapi==0.135.3
+uvicorn==0.43.0
+
+# File handling
+python-multipart==0.0.24
+
+# Firebase Admin SDK - for verifying login tokens
+firebase-admin==6.6.0
+
+# Environment variables
+python-dotenv==1.0.1
