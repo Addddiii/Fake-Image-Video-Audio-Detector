@@ -1,7 +1,12 @@
 import Link from 'next/link'
 import { useRouter } from 'next/router'
-import { FormEvent, useState } from 'react'
-import { createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth'
+import { FormEvent, useEffect, useRef, useState } from 'react'
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut
+} from 'firebase/auth'
 import Navbar from '@/components/Navbar'
 import {
   auth,
@@ -10,8 +15,29 @@ import {
   hasFirebaseConfig
 } from '@/utils/firebase'
 
+function getSignupErrorMessage(error: any) {
+  switch (error?.code) {
+    case 'auth/email-already-in-use':
+      return 'An account with this email already exists.'
+    case 'auth/invalid-email':
+      return 'Please enter a valid email address.'
+    case 'auth/weak-password':
+      return 'Password should be at least 6 characters.'
+    case 'auth/network-request-failed':
+      return 'Network error. Please check your internet connection and try again.'
+    case 'auth/popup-closed-by-user':
+      return 'The sign-up popup was closed before finishing.'
+    case 'auth/cancelled-popup-request':
+      return 'Another sign-in popup is already open.'
+    default:
+      return 'Sign up failed. Please try again.'
+  }
+}
+
 export default function SignupPage() {
   const router = useRouter()
+  const skipAutoRedirectRef = useRef(false)
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -19,6 +45,18 @@ export default function SignupPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!auth) return
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && !skipAutoRedirectRef.current) {
+        router.replace('/')
+      }
+    })
+
+    return unsubscribe
+  }, [router])
 
   const handleSignup = async (e: FormEvent) => {
     e.preventDefault()
@@ -38,10 +76,13 @@ export default function SignupPage() {
 
     try {
       setLoading(true)
+      skipAutoRedirectRef.current = true
       await createUserWithEmailAndPassword(firebaseAuth, email, password)
-      router.push('/')
+      await signOut(firebaseAuth)
+      router.push('/login?signup=success')
     } catch (err: any) {
-      setError(err.message || 'Sign up failed.')
+      setError(getSignupErrorMessage(err))
+      skipAutoRedirectRef.current = false
     } finally {
       setLoading(false)
     }
@@ -62,7 +103,7 @@ export default function SignupPage() {
       await signInWithPopup(firebaseAuth, googleProvider)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || 'Google sign up failed.')
+      setError(getSignupErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -83,7 +124,7 @@ export default function SignupPage() {
       await signInWithPopup(firebaseAuth, facebookProvider)
       router.push('/')
     } catch (err: any) {
-      setError(err.message || 'Facebook sign up failed.')
+      setError(getSignupErrorMessage(err))
     } finally {
       setLoading(false)
     }
