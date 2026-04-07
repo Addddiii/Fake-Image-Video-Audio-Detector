@@ -225,6 +225,7 @@ Thumbs.db
 # Firebase credentials (NEVER commit these!)
 *firebase-credentials.json
 firebase-credentials*.json
+backend/firebase-credentials.json
 
 # Uploaded files (user data)
 uploads/
