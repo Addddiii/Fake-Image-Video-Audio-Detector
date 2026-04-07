@@ -43,9 +43,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 @app.on_event("startup")
 async def startup_event():
     """Initialize Firebase Admin SDK for token verification"""
-    print(" Starting backend...")
+    print("Starting backend...")
     initialize_firebase()
-    print("Ready!")
+    print("Backend ready!")
 
 
 # ============================================
@@ -143,6 +143,12 @@ async def get_my_info(user: dict = Depends(get_current_user)):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
+    """
+    Upload file to backend (currently public).
+    Later this can be protected using authentication.
+    """
+
+    # Save file to uploads folder
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
 
     with open(file_path, "wb") as buffer:

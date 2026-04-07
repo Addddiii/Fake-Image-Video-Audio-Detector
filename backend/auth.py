@@ -49,10 +49,12 @@ def initialize_firebase():
         # Check if the credentials file exists
         if os.path.exists(cred_path):
             # Initialize Firebase Admin with the service account
-            cred = credentials.Certificate(cred_path)
-            firebase_admin.initialize_app(cred)
+            if not firebase_admin._apps: 
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred)
+
             firebase_initialized = True
-            print("✅ Firebase Admin initialized - can verify login tokens!")
+            print("Firebase Admin initialized - can verify login tokens!")
         else:
             # No credentials file - backend can't verify tokens
             print(f"⚠️  Warning: Firebase credentials not found")
@@ -60,7 +62,7 @@ def initialize_firebase():
             print("   Download from: Firebase Console -> Project Settings -> Service Accounts")
     except Exception as e:
         # Something went wrong during initialization
-        print(f" Error initializing Firebase: {str(e)}")
+        print(f"Error initializing Firebase: {str(e)}")
         print("   Backend won't be able to verify login tokens.")
 
 

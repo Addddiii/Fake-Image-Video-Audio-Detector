@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import Navbar from '@/components/Navbar'
+import { auth, hasFirebaseConfig } from '@/utils/firebase'
 
 type MediaType = 'image' | 'video' | 'audio'
 
@@ -94,18 +95,34 @@ export default function Home() {
   const handleUpload = async () => {
   if (!file) return;
 
+  if (!hasFirebaseConfig || !auth) {
+    alert("Firebase is not configured yet.");
+    return;
+  }
+
+  const user = auth.currentUser;
+
+  if (!user) {
+    alert("Please login first");
+    return;
+  }
+
+  const token = await user.getIdToken();
   const formData = new FormData();
   formData.append("file", file);
 
   try {
     const response = await fetch("http://127.0.0.1:8000/upload", {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
       body: formData,
     });
 
     const data = await response.json();
     console.log(data);
-    alert("Upload successful: " + data.filename);
+    alert("Upload successful");
   } catch (error) {
     console.error(error);
     alert("Upload failed");
