@@ -4,16 +4,11 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
-  signInWithPopup,
-  signOut
+  signOut,
+  updateProfile
 } from 'firebase/auth'
 import Navbar from '@/components/Navbar'
-import {
-  auth,
-  facebookProvider,
-  googleProvider,
-  hasFirebaseConfig
-} from '@/utils/firebase'
+import { auth, hasFirebaseConfig } from '@/utils/firebase'
 
 function getSignupErrorMessage(error: any) {
   switch (error?.code) {
@@ -25,10 +20,6 @@ function getSignupErrorMessage(error: any) {
       return 'Password should be at least 6 characters.'
     case 'auth/network-request-failed':
       return 'Network error. Please check your internet connection and try again.'
-    case 'auth/popup-closed-by-user':
-      return 'The sign-up popup was closed before finishing.'
-    case 'auth/cancelled-popup-request':
-      return 'Another sign-in popup is already open.'
     default:
       return 'Sign up failed. Please try again.'
   }
@@ -38,6 +29,7 @@ export default function SignupPage() {
   const router = useRouter()
   const skipAutoRedirectRef = useRef(false)
 
+  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -62,6 +54,11 @@ export default function SignupPage() {
     e.preventDefault()
     setError('')
 
+    if (!fullName.trim()) {
+      setError('Please enter your full name.')
+      return
+    }
+
     if (password !== confirmPassword) {
       setError('Passwords do not match.')
       return
@@ -77,54 +74,22 @@ export default function SignupPage() {
     try {
       setLoading(true)
       skipAutoRedirectRef.current = true
-      await createUserWithEmailAndPassword(firebaseAuth, email, password)
+
+      const userCredential = await createUserWithEmailAndPassword(
+        firebaseAuth,
+        email,
+        password
+      )
+
+      await updateProfile(userCredential.user, {
+        displayName: fullName.trim()
+      })
+
       await signOut(firebaseAuth)
       router.push('/login?signup=success')
     } catch (err: any) {
       setError(getSignupErrorMessage(err))
       skipAutoRedirectRef.current = false
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleGoogleSignup = async () => {
-    setError('')
-
-    const firebaseAuth = auth
-
-    if (!hasFirebaseConfig || !firebaseAuth) {
-      setError('Firebase is not configured yet. Add the frontend env values first.')
-      return
-    }
-
-    try {
-      setLoading(true)
-      await signInWithPopup(firebaseAuth, googleProvider)
-      router.push('/')
-    } catch (err: any) {
-      setError(getSignupErrorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleFacebookSignup = async () => {
-    setError('')
-
-    const firebaseAuth = auth
-
-    if (!hasFirebaseConfig || !firebaseAuth) {
-      setError('Firebase is not configured yet. Add the frontend env values first.')
-      return
-    }
-
-    try {
-      setLoading(true)
-      await signInWithPopup(firebaseAuth, facebookProvider)
-      router.push('/')
-    } catch (err: any) {
-      setError(getSignupErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -144,10 +109,22 @@ export default function SignupPage() {
             Sign Up
           </h1>
           <p className="text-slate-400 mt-3 text-sm leading-relaxed">
-            Create an account with email and password, or continue with Google or Facebook.
+            Create an account with your full name, email, and password.
           </p>
 
           <form onSubmit={handleSignup} className="mt-6 flex flex-col gap-4">
+            <div>
+              <label className="block text-sm text-slate-300 mb-2">Full name</label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                required
+                className="w-full rounded-xl border border-white/10 bg-[#020617]/70 px-4 py-3 text-white outline-none focus:border-blue-400/50"
+                placeholder="Enter your full name"
+              />
+            </div>
+
             <div>
               <label className="block text-sm text-slate-300 mb-2">Email</label>
               <input
@@ -266,32 +243,6 @@ export default function SignupPage() {
               {loading ? 'Creating account...' : 'Sign Up'}
             </button>
           </form>
-
-          <div className="mt-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-white/10" />
-            <span className="text-xs uppercase tracking-[0.2em] text-slate-500">or</span>
-            <div className="h-px flex-1 bg-white/10" />
-          </div>
-
-          <div className="mt-6 flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={handleGoogleSignup}
-              disabled={loading}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 transition"
-            >
-              Continue with Google
-            </button>
-
-            <button
-              type="button"
-              onClick={handleFacebookSignup}
-              disabled={loading}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 transition"
-            >
-              Continue with Facebook
-            </button>
-          </div>
 
           <p className="text-sm text-slate-400 mt-6 text-center">
             Already have an account?{' '}
