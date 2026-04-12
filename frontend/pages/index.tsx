@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import Navbar from '@/components/Navbar'
 import { auth, hasFirebaseConfig } from '@/utils/firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 
 type MediaType = 'image' | 'video' | 'audio'
 
@@ -10,6 +11,7 @@ export default function Home() {
   const [preview, setPreview] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [userName, setUserName] = useState<string | null>(null)
 
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
@@ -64,14 +66,20 @@ export default function Home() {
   )
 
   useEffect(() => {
+    if (!auth) return
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUserName(user?.displayName || null)
+    })
+    return unsubscribe
+  }, [])
+  
+  useEffect(() => {
     if (!file) {
       setPreview(null)
       return
     }
-
     const url = URL.createObjectURL(file)
     setPreview(url)
-
     return () => URL.revokeObjectURL(url)
   }, [file])
 
@@ -161,18 +169,35 @@ export default function Home() {
       <title>Fake Media Detection</title>
       <Navbar />
 
-      <div className="max-w-6xl mx-auto px-8 pt-12">
-        <p className="text-xs uppercase tracking-[0.25em] text-blue-400 font-semibold">
-          AI Detection Platform
-        </p>
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mt-3 max-w-3xl">
-          Detect AI Generated and Manipulated Media Instantly
-        </h1>
-        <p className="text-slate-400 mt-4 text-sm md:text-base leading-relaxed max-w-2xl">
-          Upload image, video or audio files and analyse them for signs of synthetic
-          generation, deepfake manipulation, voice cloning, and digital tampering.
-          Get confidence scores and forensic indicators in seconds.
-        </p>
+      {/* hero — 2 col so welcome banner sits inline with heading, above feature cards */}
+      <div className="max-w-6xl mx-auto px-8 pt-12 grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500 font-semibold">
+            AI Detection Platform
+          </p>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mt-3 max-w-3xl">
+            Detect AI Generated and Manipulated Media Instantly
+          </h1>
+          <p className="text-slate-400 mt-4 text-sm md:text-base leading-relaxed max-w-2xl">
+            Upload image, video or audio files and analyse them for signs of synthetic
+            generation, deepfake manipulation, voice cloning, and digital tampering.
+            Get confidence scores and forensic indicators in seconds.
+          </p>
+        </div>
+
+        {userName ? (
+          <div className="bg-blue-500/10 border border-blue-400/20 rounded-2xl px-6 py-4 flex items-center gap-4 mt-20">
+            <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-300 font-bold text-lg shrink-0">
+              {userName.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-white font-semibold text-base">Welcome back, {userName}</p>
+              <p className="text-slate-400 text-xs mt-0.5">Ready to analyse some media?</p>
+            </div>
+          </div>
+        ) : (
+          <div />
+        )}
       </div>
 
       {/* main content */}
@@ -285,9 +310,9 @@ export default function Home() {
         {/* RIGHT: feature cards */}
         <div className="flex flex-col gap-4">
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-blue-400/20 transition">
-<div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
-  <ImageIcon />
-</div>  
+            <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
+              <ImageIcon />
+            </div>
             <div>
               <h3 className="text-sm font-bold text-white">Image Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">
@@ -298,9 +323,9 @@ export default function Home() {
           </div>
 
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-purple-400/20 transition">
-<div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 shrink-0">
-  <VideoIcon />
-</div>
+            <div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 shrink-0">
+              <VideoIcon />
+            </div>
             <div>
               <h3 className="text-sm font-bold text-white">Video Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">
@@ -311,9 +336,9 @@ export default function Home() {
           </div>
 
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-amber-400/20 transition">
-<div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 shrink-0">
-  <AudioIcon />
-</div>
+            <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 shrink-0">
+              <AudioIcon />
+            </div>
             <div>
               <h3 className="text-sm font-bold text-white">Audio Detection</h3>
               <p className="text-sm text-slate-400 mt-1 leading-relaxed">

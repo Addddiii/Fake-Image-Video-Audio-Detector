@@ -3,23 +3,26 @@ import { useRouter } from 'next/router'
 import { useEffect, useState } from 'react'
 import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth } from '@/utils/firebase'
+import Image from 'next/image'
 
 const navItems = [
   { label: 'Results', href: '#' },
-  { label: 'Dashboard', href: '#' },
   { label: 'History', href: '#' },
+  { label: 'Dashboard', href: '#' },
   { label: 'About', href: '#' }
 ]
 
 export default function Navbar() {
   const router = useRouter()
   const [userEmail, setUserEmail] = useState('')
+  const [userName, setUserName] = useState('')
 
   useEffect(() => {
     if (!auth) return
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUserEmail(user?.email || '')
+      setUserName(user?.displayName || user?.email || '')
     })
 
     return unsubscribe
@@ -42,11 +45,14 @@ export default function Navbar() {
     <header className="sticky top-0 z-50 px-6 pt-4">
       <div className="max-w-6xl mx-auto">
         <nav className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#0B1220]/70 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.35)] px-6 py-4">
-          <Link
-            href="/"
-            className="text-white font-semibold text-2xl tracking-tight"
-          >
-            Fake Media Detection
+          <Link href="/" className="flex items-center">
+            <Image
+              src="/assets/logo-trans.png"
+              alt="LatFakeCheck Logo"
+              width={140}
+              height={36}
+              priority
+            />
           </Link>
 
           <div className="hidden md:flex items-center gap-2">
@@ -79,9 +85,6 @@ export default function Navbar() {
 
             {isLoggedIn && (
               <>
-                <span className="hidden lg:block max-w-[180px] truncate px-3 text-xs text-slate-500">
-                  {userEmail}
-                </span>
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -89,6 +92,9 @@ export default function Navbar() {
                 >
                   Logout
                 </button>
+                <span className="hidden lg:block px-3 text-xs text-slate-500">
+                  Logged in as <span className="text-slate-300">{userName}</span>
+                </span>
               </>
             )}
           </div>
