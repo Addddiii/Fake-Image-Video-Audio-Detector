@@ -1,125 +1,71 @@
-import numpy as np
-import cv2
-from PIL import Image
-import torchvision.transforms as transforms
-import io
 import os
-import glob
-import torch
-from pathlib import Path
+from PIL import Image
 
 # =========================
-# CONFIG
+# PATHS
 # =========================
+SRC_ROOT = r"D:\FakeDetection\raw_datasets\image"
+DST_ROOT = r"D:\FakeDetection\processed_datasets\image"
+
+SPLITS = ["train", "eval", "test"]
+CLASSES = ["real", "fake"]
+VALID_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
 IMG_SIZE = (224, 224)
 
-patch_pipline = transforms.Compose([
-    transforms.Resize(IMG_SIZE),
-    transforms.ToTensor(),
-    transforms.Normalize([0.5, 0.5, 0.5],
-                         [0.5, 0.5, 0.5])
-])
 
-def image_processor(image_file):
-    """in back end when an image gets uploaded we might primarely only use this function
-       """
-    # STEP 1: first we use PILL as the front door to accept different file formats and turn them all into RGB
-    try:
-        pil_image = Image.open(image_file).convert('RGB')
-    except Exception as e:
-        print(f"Failed to load image: {e}")
-        return None, None
-
-    # STEP 2: resize image to 224x224 and convert to tensor
-    spatial_tensor_patch = patch_pipline(pil_image)
-
-    # STEP 3: now we use openCV to extract frequency data from the image
-    open_cv_array = np.array(pil_image.resize(IMG_SIZE))
-    gray_image = cv2.cvtColor(open_cv_array, cv2.COLOR_RGB2GRAY)
-    
-    f_transform = np.fft.fft2(gray_image)
-    f_shift = np.fft.fftshift(f_transform)
-
-    frequency_spectrum = 20*np.log(np.abs(f_shift)+ 1e-8)
-
-    # normalize frequency spectrum
-    frequency_spectrum = frequency_spectrum.astype(np.float32)
-    min_val = frequency_spectrum.min()
-    max_val = frequency_spectrum.max()
-    if max_val > min_val:
-        frequency_spectrum = (frequency_spectrum - min_val) / (max_val - min_val)
-    else:
-        frequency_spectrum = np.zeros_like(frequency_spectrum, dtype=np.float32)
-
-    return spatial_tensor_patch, frequency_spectrum
+def ensure_folder(path):
+    os.makedirs(path, exist_ok=True)
 
 
-def folder_processor(folder_path, output_folder):
-    print(f"\nScanning folder: {folder_path}")
+def get_image_files(folder):
+    files = []
+    if not os.path.exists(folder):
+        return files
 
-    search_patterns = ['*.jpg', '*.jpeg', '*.png', '*.webp']
-    image_files = []
+    for f in os.listdir(folder):
+        full_path = os.path.join(folder, f)
+        ext = os.path.splitext(f)[1].lower()
+        if os.path.isfile(full_path) and ext in VALID_EXTS:
+            files.append(full_path)
 
-    for pattern in search_patterns:
-        image_files.extend(glob.glob(os.path.join(folder_path, "**", pattern), recursive=True))
-
-    total = len(image_files)
-
-    if total == 0:
-        print("No valid images found")
-        return
-
-    print(f"Total images found: {total}")
-    print("Starting processing...\n")
-
-    for i, img in enumerate(image_files):
-        with open(img, 'rb') as file_stream:
-            spatial_patch, frequency_spectrum = image_processor(file_stream)
-
-            if spatial_patch is not None and frequency_spectrum is not None:
-                frequency_tensor = torch.tensor(frequency_spectrum, dtype = torch.float32).unsqueeze(0)
-
-                file_name = Path(img).stem + ".pt"
-                save_path = os.path.join(output_folder, file_name)
-
-                os.makedirs(output_folder, exist_ok=True)
-
-                torch.save({
-                    "spatial_tensor": spatial_patch,
-                    "frequency_tensor": frequency_tensor,
-                    "original_file": img
-                }, save_path)
-
-                # Progress info
-                percent = ((i+1) / total) * 100
-                print(f"[{i+1}/{total}] {percent:.1f}% - processed: {file_name}")
-
-            else:
-                print(f"Failed: {os.path.basename(img)}")
-
-    print(f"\nFinished folder: {folder_path}")
+    return sorted(files)
 
 
-# =========================
-# RUN FOR FULL DATASET
-# =========================
-RAW_ROOT = r"D:\FakeDetection\raw_datasets\image"
-OUT_ROOT = r"D:\FakeDetection\processed_datasets\image_tensors"
+def process_and_save(src_path, dst_path):
+    with Image.open(src_path) as img:
+        img = img.convert("RGB")
+        img = img.resize(IMG_SIZE, Image.LANCZOS)
+        img.save(dst_path, "JPEG", quality=95)
 
-splits = ["train", "eval", "test"]
-classes = ["real", "fake"]
 
-for split in splits:
-    for cls in classes:
-        in_folder = os.path.join(RAW_ROOT, split, cls)
-        out_folder = os.path.join(OUT_ROOT, split, cls)
+for split in SPLITS:
+    for class_name in CLASSES:
+        src_folder = os.path.join(SRC_ROOT, split, class_name)
+        dst_folder = os.path.join(DST_ROOT, split, class_name)
 
-        if os.path.exists(in_folder):
-            print(f"\n==============================")
-            print(f"Processing {split}/{cls}")
-            print(f"==============================")
-            folder_processor(in_folder, out_folder)
-        else:
-            print(f"Missing folder: {in_folder}")
+        ensure_folder(dst_folder)
 
-print("\nAll image preprocessing done.")
+        image_files = get_image_files(src_folder)
+        print(f"\nProcessing {split}/{class_name}...")
+        print(f"Found {len(image_files)} images")
+
+        count = 1
+        for i, src_path in enumerate(image_files, start=1):
+            try:
+                new_name = f"{class_name}_{count:06d}.jpg"
+                dst_path = os.path.join(dst_folder, new_name)
+
+                process_and_save(src_path, dst_path)
+                count += 1
+
+                if i % 500 == 0:
+                    print(f"Processed {i}/{len(image_files)}")
+
+            except Exception as e:
+                print(f"Skipped {src_path} بسبب error: {e}")
+
+        print(f"Done {split}/{class_name}")
+        print(f"Saved {count - 1} images to {dst_folder}")
+
+print("\nDone. All images resized and saved.")
