@@ -12,6 +12,8 @@ export default function Home() {
   const [dragging, setDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [userName, setUserName] = useState<string | null>(null)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [loginPrompt, setLoginPrompt] = useState('')
 
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
@@ -21,7 +23,7 @@ export default function Home() {
     audio: 'audio/wav,audio/mpeg,audio/flac'
   }
 
-    const ImageIcon = () => (
+  const ImageIcon = () => (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
@@ -67,30 +69,59 @@ export default function Home() {
 
   useEffect(() => {
     if (!auth) return
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUserName(user?.displayName || null)
+      setIsLoggedIn(Boolean(user))
+      setUserName(user?.displayName || user?.email?.split('@')[0] || null)
+
+      if (user) {
+        setLoginPrompt('')
+      } else {
+        setFile(null)
+        setPreview(null)
+        setDragging(false)
+      }
     })
+
     return unsubscribe
   }, [])
-  
+
   useEffect(() => {
     if (!file) {
       setPreview(null)
       return
     }
+
     const url = URL.createObjectURL(file)
     setPreview(url)
+
     return () => URL.revokeObjectURL(url)
   }, [file])
 
+  const showLoginPrompt = () => {
+    setLoginPrompt('Please log in first to upload and analyse files.')
+  }
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
+
+    if (!isLoggedIn) {
+      setDragging(false)
+      showLoginPrompt()
+      return
+    }
+
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
     if (dropped) setFile(dropped)
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isLoggedIn) {
+      showLoginPrompt()
+      return
+    }
+
     const selected = e.target.files?.[0]
     if (selected) setFile(selected)
   }
@@ -100,42 +131,53 @@ export default function Home() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const handleUploadAreaClick = () => {
+    if (!isLoggedIn) {
+      showLoginPrompt()
+      return
+    }
+
+    if (!file) {
+      fileInputRef.current?.click()
+    }
+  }
+
   const handleUpload = async () => {
-  if (!file) return;
+    if (!file) return
 
-  if (!hasFirebaseConfig || !auth) {
-    alert("Firebase is not configured yet.");
-    return;
+    if (!hasFirebaseConfig || !auth) {
+      alert('Firebase is not configured yet.')
+      return
+    }
+
+    const user = auth.currentUser
+
+    if (!user) {
+      showLoginPrompt()
+      return
+    }
+
+    const token = await user.getIdToken()
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      })
+
+      const data = await response.json()
+      console.log(data)
+      alert('Upload successful')
+    } catch (error) {
+      console.error(error)
+      alert('Upload failed')
+    }
   }
-
-  const user = auth.currentUser;
-
-  if (!user) {
-    alert("Please login first");
-    return;
-  }
-
-  const token = await user.getIdToken();
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const response = await fetch("http://127.0.0.1:8000/upload", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
-
-    const data = await response.json();
-    console.log(data);
-    alert("Upload successful");
-  } catch (error) {
-    console.error(error);
-    alert("Upload failed");
-  }
-};
 
   const capitalisedTab = activeTab.charAt(0).toUpperCase() + activeTab.slice(1)
 
@@ -169,7 +211,6 @@ export default function Home() {
       <title>Fake Media Detection</title>
       <Navbar />
 
-      {/* hero — 2 col so welcome banner sits inline with heading, above feature cards */}
       <div className="max-w-6xl mx-auto px-8 pt-12 grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-slate-500 font-semibold">
@@ -200,9 +241,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* main content */}
       <div className="max-w-6xl mx-auto p-8 grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
-        {/* LEFT: upload card */}
         <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col gap-5">
           <div>
             <p className="text-xs text-slate-400 uppercase tracking-[0.2em] font-semibold">
@@ -211,7 +250,7 @@ export default function Home() {
           </div>
 
           <div className="flex gap-2 flex-wrap">
-            {tabs.map(tab => (
+            {tabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => {
@@ -229,6 +268,16 @@ export default function Home() {
             ))}
           </div>
 
+          {!isLoggedIn && (
+            <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              Please log in first to upload and analyse files.
+            </div>
+          )}
+
+          {loginPrompt && !isLoggedIn && (
+            <p className="text-sm text-red-400">{loginPrompt}</p>
+          )}
+
           <input
             ref={fileInputRef}
             type="file"
@@ -240,15 +289,26 @@ export default function Home() {
           <div
             onDragOver={(e) => {
               e.preventDefault()
+
+              if (!isLoggedIn) {
+                setDragging(false)
+                showLoginPrompt()
+                return
+              }
+
               setDragging(true)
             }}
-            onDragLeave={() => setDragging(false)}
+            onDragLeave={() => {
+              if (isLoggedIn) setDragging(false)
+            }}
             onDrop={handleDrop}
-            onClick={() => !file && fileInputRef.current?.click()}
+            onClick={handleUploadAreaClick}
             className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
-              file ? '' : 'cursor-pointer'
+              isLoggedIn && !file ? 'cursor-pointer' : ''
             } ${
-              dragging
+              !isLoggedIn
+                ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
+                : dragging
                 ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
                 : 'border-blue-400/20 bg-[#020617]/70 hover:border-blue-400/40 hover:bg-[#020617]'
             }`}
@@ -267,6 +327,19 @@ export default function Home() {
                   ✕ Remove file
                 </button>
               </div>
+            ) : !isLoggedIn ? (
+              <>
+                <div className="w-14 h-14 rounded-full border flex items-center justify-center mb-4 bg-white/5 text-slate-300 border-white/10">
+                  <span className="text-xl">🔒</span>
+                </div>
+
+                <p className="text-slate-200 text-sm font-medium text-center px-4">
+                  Log in to upload image, video, or audio files
+                </p>
+                <p className="text-slate-500 text-xs mt-2 text-center px-4">
+                  Upload and analysis are only available for signed-in users.
+                </p>
+              </>
             ) : (
               <>
                 <div
@@ -296,18 +369,17 @@ export default function Home() {
 
           <button
             onClick={handleUpload}
-            disabled={!file}
+            disabled={!file || !isLoggedIn}
             className={`w-full py-3 rounded-xl font-semibold tracking-wide transition-all duration-200 ${
-              file
+              file && isLoggedIn
                 ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
                 : 'bg-white/10 text-slate-500 cursor-not-allowed'
             }`}
           >
-            Analyse {capitalisedTab}
+            {isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
           </button>
         </div>
 
-        {/* RIGHT: feature cards */}
         <div className="flex flex-col gap-4">
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-blue-400/20 transition">
             <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
@@ -350,7 +422,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* stats row */}
       <div className="max-w-6xl mx-auto px-8 pb-10">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">

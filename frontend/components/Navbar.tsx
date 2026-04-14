@@ -5,7 +5,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth } from '@/utils/firebase'
 import Image from 'next/image'
 
-const navItems = [
+const privateNavItems = [
   { label: 'Results', href: '#' },
   { label: 'History', href: '#' },
   { label: 'Dashboard', href: '#' },
@@ -22,7 +22,7 @@ export default function Navbar() {
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUserEmail(user?.email || '')
-      setUserName(user?.displayName || user?.email || '')
+      setUserName(user?.displayName || user?.email?.split('@')[0] || '')
     })
 
     return unsubscribe
@@ -56,35 +56,25 @@ export default function Navbar() {
           </Link>
 
           <div className="hidden md:flex items-center gap-2">
-            {!isLoggedIn && (
-              <>
-                <Link
-                  href="/login"
-                  className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition"
-                >
-                  Login
-                </Link>
-                <Link
-                  href="/signup"
-                  className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition"
-                >
-                  Sign Up
-                </Link>
-              </>
-            )}
-
-            {navItems.map((item) => (
+            {!isLoggedIn ? (
               <Link
-                key={item.label}
-                href={item.href}
+                href="/login"
                 className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition"
               >
-                {item.label}
+                Login
               </Link>
-            ))}
-
-            {isLoggedIn && (
+            ) : (
               <>
+                {privateNavItems.map((item) => (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-white/5 transition"
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -92,8 +82,9 @@ export default function Navbar() {
                 >
                   Logout
                 </button>
+
                 <span className="hidden lg:block px-3 text-xs text-slate-500">
-                  Logged in as <span className="text-slate-300">{userName}</span>
+                  Welcome, <span className="text-slate-300">{userName || 'User'}</span>
                 </span>
               </>
             )}

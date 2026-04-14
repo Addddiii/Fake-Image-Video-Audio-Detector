@@ -9,10 +9,32 @@ import {
 import Navbar from '@/components/Navbar'
 import {
   auth,
-  facebookProvider,
   googleProvider,
   hasFirebaseConfig
 } from '@/utils/firebase'
+
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5 shrink-0" aria-hidden="true">
+      <path
+        fill="#EA4335"
+        d="M12 10.2v3.9h5.4c-.2 1.3-.8 2.4-1.8 3.2l3 2.3c1.8-1.6 2.8-4 2.8-6.8 0-.7-.1-1.3-.2-1.9H12z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 21c2.4 0 4.5-.8 6-2.2l-3-2.3c-.8.6-1.8 1-3 .9-2.3 0-4.3-1.6-5-3.7H3.8V16c1.5 3 4.6 5 8.2 5z"
+      />
+      <path
+        fill="#4A90E2"
+        d="M7 13.7c-.2-.6-.3-1.2-.3-1.7s.1-1.2.3-1.7V8H3.8C3.3 9.2 3 10.6 3 12s.3 2.8.8 4L7 13.7z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M12 6.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6C16.4 3.8 14.4 3 12 3 8.4 3 5.3 5 3.8 8L7 10.3c.7-2.1 2.7-3.7 5-3.7z"
+      />
+    </svg>
+  )
+}
 
 function getLoginErrorMessage(error: any) {
   switch (error?.code) {
@@ -99,27 +121,6 @@ export default function LoginPage() {
     }
   }
 
-  const handleFacebookLogin = async () => {
-    setError('')
-
-    const firebaseAuth = auth
-
-    if (!hasFirebaseConfig || !firebaseAuth) {
-      setError('Firebase is not configured yet. Add the frontend env values first.')
-      return
-    }
-
-    try {
-      setLoading(true)
-      await signInWithPopup(firebaseAuth, facebookProvider)
-      router.push('/')
-    } catch (err: any) {
-      setError(getLoginErrorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
     <main className="min-h-screen bg-gradient-to-b from-[#020617] via-[#0B1120] to-[#0F172A]">
       <title>Login | Fake Media Detection</title>
@@ -134,7 +135,7 @@ export default function LoginPage() {
             Login
           </h1>
           <p className="text-slate-400 mt-3 text-sm leading-relaxed">
-            Sign in with your email and password, or continue with Google or Facebook.
+            Sign in with your email and password, or continue with Google.
           </p>
 
           {signupSuccess && (
@@ -232,18 +233,10 @@ export default function LoginPage() {
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 transition"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 transition flex items-center justify-center gap-3"
             >
-              Continue with Google
-            </button>
-
-            <button
-              type="button"
-              onClick={handleFacebookLogin}
-              disabled={loading}
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white hover:bg-white/10 transition"
-            >
-              Continue with Facebook
+              <GoogleIcon />
+              <span>Continue with Google</span>
             </button>
           </div>
 
