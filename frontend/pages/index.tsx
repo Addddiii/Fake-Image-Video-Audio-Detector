@@ -14,6 +14,7 @@ export default function Home() {
   const [userName, setUserName] = useState<string | null>(null)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginPrompt, setLoginPrompt] = useState('')
+  const [pageReady, setPageReady] = useState(false)
 
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
@@ -68,6 +69,11 @@ export default function Home() {
   )
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setPageReady(true), 60)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
     if (!auth) return
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -99,7 +105,7 @@ export default function Home() {
   }, [file])
 
   const showLoginPrompt = () => {
-    setLoginPrompt('Please log in first to upload and analyse files.')
+    setLoginPrompt('Log in or sign up first to start uploading and analysing files.')
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -211,231 +217,251 @@ export default function Home() {
       <title>Fake Media Detection</title>
       <Navbar />
 
-      <div className="max-w-6xl mx-auto px-8 pt-12 grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-slate-500 font-semibold">
-            AI Detection Platform
-          </p>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mt-3 max-w-3xl">
-            Detect AI Generated and Manipulated Media Instantly
-          </h1>
-          <p className="text-slate-400 mt-4 text-sm md:text-base leading-relaxed max-w-2xl">
-            Upload image, video or audio files and analyse them for signs of synthetic
-            generation, deepfake manipulation, voice cloning, and digital tampering.
-            Get confidence scores and forensic indicators in seconds.
-          </p>
-        </div>
-
-        {userName ? (
-          <div className="bg-blue-500/10 border border-blue-400/20 rounded-2xl px-6 py-4 flex items-center gap-4 mt-20">
-            <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-300 font-bold text-lg shrink-0">
-              {userName.charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <p className="text-white font-semibold text-base">Welcome back, {userName}</p>
-              <p className="text-slate-400 text-xs mt-0.5">Ready to analyse some media?</p>
-            </div>
-          </div>
-        ) : (
-          <div />
-        )}
-      </div>
-
-      <div className="max-w-6xl mx-auto p-8 grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
-        <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col gap-5">
+      <div
+        className={`transition-all duration-700 ease-out ${
+          pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+        }`}
+      >
+        <div
+          className={`max-w-6xl mx-auto px-8 ${
+            isLoggedIn ? 'pt-12' : 'pt-8'
+          } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
+        >
           <div>
-            <p className="text-xs text-slate-400 uppercase tracking-[0.2em] font-semibold">
-              Select media type
+            <p className="text-xs uppercase tracking-[0.25em] text-slate-500 font-semibold">
+              AI Detection Platform
+            </p>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mt-3 max-w-3xl">
+              Detect AI Generated and Manipulated Media Instantly
+            </h1>
+            <p className="text-slate-400 mt-6 text-sm md:text-base leading-relaxed max-w-2xl">
+              Upload image, video or audio files and analyse them for signs of synthetic
+              generation, deepfake manipulation, voice cloning, and digital tampering.
+              Get confidence scores and forensic indicators in seconds.
             </p>
           </div>
 
-          <div className="flex gap-2 flex-wrap">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => {
-                  setActiveTab(tab)
-                  removeFile()
+          {isLoggedIn && userName ? (
+            <div className="bg-blue-500/10 border border-blue-400/20 rounded-2xl px-6 py-4 flex items-center gap-4 mt-20 shadow-[0_0_24px_rgba(59,130,246,0.08)]">
+              <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-300 font-bold text-lg shrink-0">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="text-white font-semibold text-base">Welcome back, {userName}</p>
+                <p className="text-slate-400 text-xs mt-0.5">Ready to analyse some media?</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className={`max-w-6xl mx-auto px-8 ${isLoggedIn ? 'pt-8 pb-10' : 'pt-6 pb-10'}`}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
+            <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col gap-5">
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] font-semibold">
+                  Select media type
+                </p>
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                {tabs.map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => {
+                      setActiveTab(tab)
+                      removeFile()
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${
+                      activeTab === tab
+                        ? 'bg-blue-500/25 border-blue-300/60 text-white shadow-[0_0_24px_rgba(59,130,246,0.22)]'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+
+              {!isLoggedIn && (
+                <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-3 flex items-start gap-3 shadow-[0_0_18px_rgba(59,130,246,0.06)]">
+                  <div className="w-8 h-8 rounded-full bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0 mt-0.5">
+                    <span className="text-sm font-bold">i</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-blue-200">
+                      Please log in first to upload and analyse files.
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Use the Login / Signup button above to get started.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {loginPrompt && !isLoggedIn && (
+                <p className="text-sm text-blue-300">{loginPrompt}</p>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={acceptMap[activeTab]}
+                onChange={handleFileChange}
+                className="hidden"
+              />
+
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault()
+
+                  if (!isLoggedIn) {
+                    setDragging(false)
+                    showLoginPrompt()
+                    return
+                  }
+
+                  setDragging(true)
                 }}
-                className={`px-4 py-2 rounded-full text-sm font-medium uppercase tracking-wide transition-all duration-200 border ${
-                  activeTab === tab
-                    ? 'bg-blue-500/15 border-blue-400/40 text-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.15)]'
-                    : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                onDragLeave={() => {
+                  if (isLoggedIn) setDragging(false)
+                }}
+                onDrop={handleDrop}
+                onClick={handleUploadAreaClick}
+                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
+                  isLoggedIn && !file ? 'cursor-pointer' : ''
+                } ${
+                  !isLoggedIn
+                    ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
+                    : dragging
+                    ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
+                    : 'border-blue-400/20 bg-[#020617]/70 hover:border-blue-300/50 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(59,130,246,0.10)]'
                 }`}
               >
-                {tab}
-              </button>
-            ))}
-          </div>
+                {file ? (
+                  <div className="flex flex-col items-center gap-3 px-4 text-center">
+                    {renderPreview()}
+                    <p className="text-xs text-slate-300 mt-1 break-all">{file.name}</p>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeFile()
+                      }}
+                      className="text-xs text-red-400 hover:text-red-300 transition"
+                    >
+                      ✕ Remove file
+                    </button>
+                  </div>
+                ) : !isLoggedIn ? (
+                  <>
+                    <div className="w-14 h-14 rounded-full border flex items-center justify-center mb-4 bg-blue-500/10 text-blue-300 border-blue-400/20 shadow-[0_0_18px_rgba(59,130,246,0.08)]">
+                      <span className="text-xl">🔒</span>
+                    </div>
 
-          {!isLoggedIn && (
-            <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-              Please log in first to upload and analyse files.
-            </div>
-          )}
+                    <p className="text-slate-200 text-sm font-medium text-center px-4">
+                      Log in to upload image, video, or audio files
+                    </p>
+                    <p className="text-slate-500 text-xs mt-2 text-center px-4">
+                      Upload and analysis are only available for signed-in users.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div
+                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${
+                        dragging
+                          ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
+                          : 'bg-white/5 text-blue-300 border-blue-400/20'
+                      }`}
+                    >
+                      <span className="text-xl">↑</span>
+                    </div>
 
-          {loginPrompt && !isLoggedIn && (
-            <p className="text-sm text-red-400">{loginPrompt}</p>
-          )}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={acceptMap[activeTab]}
-            onChange={handleFileChange}
-            className="hidden"
-          />
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault()
-
-              if (!isLoggedIn) {
-                setDragging(false)
-                showLoginPrompt()
-                return
-              }
-
-              setDragging(true)
-            }}
-            onDragLeave={() => {
-              if (isLoggedIn) setDragging(false)
-            }}
-            onDrop={handleDrop}
-            onClick={handleUploadAreaClick}
-            className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
-              isLoggedIn && !file ? 'cursor-pointer' : ''
-            } ${
-              !isLoggedIn
-                ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
-                : dragging
-                ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
-                : 'border-blue-400/20 bg-[#020617]/70 hover:border-blue-400/40 hover:bg-[#020617]'
-            }`}
-          >
-            {file ? (
-              <div className="flex flex-col items-center gap-3 px-4 text-center">
-                {renderPreview()}
-                <p className="text-xs text-slate-300 mt-1 break-all">{file.name}</p>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    removeFile()
-                  }}
-                  className="text-xs text-red-400 hover:text-red-300 transition"
-                >
-                  ✕ Remove file
-                </button>
+                    <p className="text-slate-200 text-sm font-medium">
+                      Drag & drop your {activeTab} here
+                    </p>
+                    <p className="text-slate-500 text-xs mt-1">
+                      or <span className="text-blue-300 underline">click to browse</span>
+                    </p>
+                    <p className="text-slate-500 text-xs mt-3 text-center px-4">
+                      {activeTab === 'image' && 'Accepted: JPG, PNG, WEBP · Max 20 MB'}
+                      {activeTab === 'video' && 'Accepted: MP4, AVI, MOV · Max 200 MB'}
+                      {activeTab === 'audio' && 'Accepted: WAV, MP3, FLAC · Max 50 MB'}
+                    </p>
+                  </>
+                )}
               </div>
-            ) : !isLoggedIn ? (
-              <>
-                <div className="w-14 h-14 rounded-full border flex items-center justify-center mb-4 bg-white/5 text-slate-300 border-white/10">
-                  <span className="text-xl">🔒</span>
+
+              <button
+                onClick={handleUpload}
+                disabled={!file || !isLoggedIn}
+                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${
+                  file && isLoggedIn
+                    ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
+                    : 'bg-white/10 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                {isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start transition-all duration-200 hover:border-blue-400/30 hover:-translate-y-1 hover:shadow-[0_16px_32px_rgba(0,0,0,0.22)]">
+                <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
+                  <ImageIcon />
                 </div>
-
-                <p className="text-slate-200 text-sm font-medium text-center px-4">
-                  Log in to upload image, video, or audio files
-                </p>
-                <p className="text-slate-500 text-xs mt-2 text-center px-4">
-                  Upload and analysis are only available for signed-in users.
-                </p>
-              </>
-            ) : (
-              <>
-                <div
-                  className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${
-                    dragging
-                      ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
-                      : 'bg-white/5 text-blue-300 border-blue-400/20'
-                  }`}
-                >
-                  <span className="text-xl">↑</span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Image Detection</h3>
+                  <p className="text-sm text-slate-400 mt-1 leading-relaxed">
+                    Analyses photos for GAN-generated artifacts, inconsistent facial geometry,
+                    lighting anomalies, and pixel-level statistical irregularities.
+                  </p>
                 </div>
+              </div>
 
-                <p className="text-slate-300 text-sm font-medium">
-                  Drag & drop your {activeTab} here
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start transition-all duration-200 hover:border-purple-400/30 hover:-translate-y-1 hover:shadow-[0_16px_32px_rgba(0,0,0,0.22)]">
+                <div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 shrink-0">
+                  <VideoIcon />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Video Detection</h3>
+                  <p className="text-sm text-slate-400 mt-1 leading-relaxed">
+                    Frame-by-frame temporal analysis identifies face-swap deepfakes,
+                    lip-sync inconsistencies, and inter-frame blending artifacts.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start transition-all duration-200 hover:border-amber-400/30 hover:-translate-y-1 hover:shadow-[0_16px_32px_rgba(0,0,0,0.22)]">
+                <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 shrink-0">
+                  <AudioIcon />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Audio Detection</h3>
+                  <p className="text-sm text-slate-400 mt-1 leading-relaxed">
+                    Spectral and waveform analysis identifies AI-generated speech,
+                    voice cloning artifacts, and audio splicing markers.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-w-6xl mx-auto pt-4 pb-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
+                <p className="text-2xl font-bold text-white">-</p>
+                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
+                  Detection Accuracy
                 </p>
-                <p className="text-slate-500 text-xs mt-1">
-                  or <span className="text-blue-400 underline">click to browse</span>
+              </div>
+
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
+                <p className="text-2xl font-bold text-white">-</p>
+                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
+                  Average Analysis
                 </p>
-                <p className="text-slate-500 text-xs mt-3 text-center px-4">
-                  {activeTab === 'image' && 'Accepted: JPG, PNG, WEBP · Max 20 MB'}
-                  {activeTab === 'video' && 'Accepted: MP4, AVI, MOV · Max 200 MB'}
-                  {activeTab === 'audio' && 'Accepted: WAV, MP3, FLAC · Max 50 MB'}
-                </p>
-              </>
-            )}
-          </div>
-
-          <button
-            onClick={handleUpload}
-            disabled={!file || !isLoggedIn}
-            className={`w-full py-3 rounded-xl font-semibold tracking-wide transition-all duration-200 ${
-              file && isLoggedIn
-                ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
-                : 'bg-white/10 text-slate-500 cursor-not-allowed'
-            }`}
-          >
-            {isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-4">
-          <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-blue-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-400/20 flex items-center justify-center text-blue-300 shrink-0">
-              <ImageIcon />
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-white">Image Detection</h3>
-              <p className="text-sm text-slate-400 mt-1 leading-relaxed">
-                Analyses photos for GAN-generated artifacts, inconsistent facial geometry,
-                lighting anomalies, and pixel-level statistical irregularities.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-purple-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-400/20 flex items-center justify-center text-purple-300 shrink-0">
-              <VideoIcon />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-white">Video Detection</h3>
-              <p className="text-sm text-slate-400 mt-1 leading-relaxed">
-                Frame-by-frame temporal analysis identifies face-swap deepfakes,
-                lip-sync inconsistencies, and inter-frame blending artifacts.
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 flex gap-4 items-start hover:border-amber-400/20 transition">
-            <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center text-amber-300 shrink-0">
-              <AudioIcon />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-white">Audio Detection</h3>
-              <p className="text-sm text-slate-400 mt-1 leading-relaxed">
-                Spectral and waveform analysis identifies AI-generated speech,
-                voice cloning artifacts, and audio splicing markers.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-8 pb-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-            <p className="text-2xl font-bold text-white">-</p>
-            <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
-              Detection Accuracy
-            </p>
-          </div>
-
-          <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-            <p className="text-2xl font-bold text-white">-</p>
-            <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
-              Average Analysis
-            </p>
           </div>
         </div>
       </div>
