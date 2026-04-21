@@ -6,6 +6,15 @@ import Head from 'next/head'
 
 type MediaType = 'image' | 'video' | 'audio'
 
+interface PredictionResult {
+  prediction: 'fake' | 'real'
+  confidence: number
+  probabilities: {
+    fake: number
+    real: number
+  }
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<MediaType>('image')
   const [file, setFile] = useState<File | null>(null)
@@ -16,6 +25,11 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [loginPrompt, setLoginPrompt] = useState('')
   const [pageReady, setPageReady] = useState(false)
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [analysisTime, setAnalysisTime] = useState<number>(0)
+  const [totalAnalyses, setTotalAnalyses] = useState<number>(0)
 
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
@@ -135,6 +149,8 @@ export default function Home() {
 
   const removeFile = () => {
     setFile(null)
+    setPredictionResult(null)
+    setError(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -164,6 +180,12 @@ export default function Home() {
       return
     }
 
+    setIsAnalyzing(true)
+    setPredictionResult(null)
+    setError(null)
+
+    const startTime = performance.now()
+
     const token = await user.getIdToken()
     const formData = new FormData()
     formData.append('file', file)
@@ -178,11 +200,25 @@ export default function Home() {
       })
 
       const data = await response.json()
+      const endTime = performance.now()
+      const analysisTimeSeconds = ((endTime - startTime) / 1000).toFixed(2)
+
       console.log(data)
-      alert('Upload successful')
+
+      if (data.prediction) {
+        setPredictionResult(data.prediction)
+        setAnalysisTime(parseFloat(analysisTimeSeconds))
+        setTotalAnalyses(prev => prev + 1)
+      } else if (data.error) {
+        setError(data.error)
+      } else {
+        setError('Unable to analyze image. Please try again.')
+      }
     } catch (error) {
       console.error(error)
-      alert('Upload failed')
+      setError('Upload failed. Please check if the backend server is running.')
+    } finally {
+      setIsAnalyzing(false)
     }
   }
 
@@ -214,40 +250,38 @@ export default function Home() {
   }
 
   return (
-<main className="min-h-screen bg-[#020617] relative overflow-hidden">
-  <Head>
-    <title>LatFakeCheck</title>
-    <link rel="icon" href="/assets/LFC-logo-trans.png" />
-  </Head>
+    <main className="min-h-screen bg-[#020617] relative overflow-hidden">
+      <Head>
+        <title>LatFakeCheck</title>
+        <link rel="icon" href="/assets/LFC-logo-trans.png" />
+      </Head>
 
-<div
-  className="pointer-events-none absolute inset-0 z-0"
-  style={{
-    backgroundSize: '100% 200%',
-    backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(12,185,235,0.28) 0%, transparent 65%)',
-    animation: 'drift 6s ease-in-out infinite'
-  }}
-/>
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          backgroundSize: '100% 200%',
+          backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(12,185,235,0.28) 0%, transparent 65%)',
+          animation: 'drift 6s ease-in-out infinite'
+        }}
+      />
 
-<div
-  className="pointer-events-none absolute inset-0 z-0"
-  style={{
-    backgroundImage: 'radial-gradient(rgba(12,185,235,0.15) 1px, transparent 1px)',
-    backgroundSize: '28px 28px'
-  }}
-/>
- 
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          backgroundImage: 'radial-gradient(rgba(12,185,235,0.15) 1px, transparent 1px)',
+          backgroundSize: '28px 28px'
+        }}
+      />
+
       <Navbar />
 
       <div
-        className={`transition-all duration-700 ease-out ${
-          pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-        }`}
+        className={`transition-all duration-700 ease-out ${pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+          }`}
       >
         <div
-          className={`max-w-6xl mx-auto px-8 ${
-            isLoggedIn ? 'pt-12' : 'pt-8'
-          } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
+          className={`max-w-6xl mx-auto px-8 ${isLoggedIn ? 'pt-12' : 'pt-8'
+            } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
         >
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-[#0cb9eb]/80 font-semibold">
@@ -293,11 +327,10 @@ export default function Home() {
                       setActiveTab(tab)
                       removeFile()
                     }}
-                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${
-                      activeTab === tab
+                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${activeTab === tab
                         ? 'bg-[#0cb9eb]/20 border-[#0cb9eb]/70 text-[#0cb9eb] shadow-[0_0_24px_rgba(12,185,235,0.3)]'
                         : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
-                    }`}
+                      }`}
                   >
                     {tab}
                   </button>
@@ -349,15 +382,13 @@ export default function Home() {
                 }}
                 onDrop={handleDrop}
                 onClick={handleUploadAreaClick}
-                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
-                  isLoggedIn && !file ? 'cursor-pointer' : ''
-                } ${
-                  !isLoggedIn
+                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${isLoggedIn && !file ? 'cursor-pointer' : ''
+                  } ${!isLoggedIn
                     ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
                     : dragging
-                    ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
-                    : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
-                }`}
+                      ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
+                      : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
+                  }`}
               >
                 {file ? (
                   <div className="flex flex-col items-center gap-3 px-4 text-center">
@@ -389,11 +420,10 @@ export default function Home() {
                 ) : (
                   <>
                     <div
-                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${
-                        dragging
+                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${dragging
                           ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
                           : 'bg-white/5 text-blue-300 border-blue-400/20'
-                      }`}
+                        }`}
                     >
                       <span className="text-xl">↑</span>
                     </div>
@@ -415,15 +445,82 @@ export default function Home() {
 
               <button
                 onClick={handleUpload}
-                disabled={!file || !isLoggedIn}
-                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${
-                  file && isLoggedIn
+                disabled={!file || !isLoggedIn || isAnalyzing}
+                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${file && isLoggedIn && !isAnalyzing
                     ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
                     : 'bg-white/10 text-slate-400 cursor-not-allowed'
-                }`}
+                  }`}
               >
-                {isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
+                {isAnalyzing ? 'Analyzing...' : isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
               </button>
+
+              {/* Prediction Results Display */}
+              {predictionResult && (
+                <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 animate-fadeIn">
+                  <h3 className="text-sm font-bold text-[#0cb9eb] uppercase tracking-[0.2em] mb-4">
+                    Analysis Result
+                  </h3>
+
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${predictionResult.prediction === 'real'
+                          ? 'bg-green-500/20 border-2 border-green-400/50'
+                          : 'bg-red-500/20 border-2 border-red-400/50'
+                        }`}>
+                        {predictionResult.prediction === 'real' ? '✓' : '⚠'}
+                      </div>
+                      <div>
+                        <p className={`text-2xl font-bold ${predictionResult.prediction === 'real' ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                          {predictionResult.prediction === 'real' ? 'Real Image' : 'Fake/AI Generated'}
+                        </p>
+                        <p className="text-sm text-slate-400">
+                          {predictionResult.confidence}% confidence
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-400">Real Probability</span>
+                        <span className="text-green-400 font-semibold">{predictionResult.probabilities.real}%</span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-green-600 to-green-400 h-2.5 rounded-full transition-all duration-500"
+                          style={{ width: `${predictionResult.probabilities.real}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-400">Fake Probability</span>
+                        <span className="text-red-400 font-semibold">{predictionResult.probabilities.fake}%</span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-red-600 to-red-400 h-2.5 rounded-full transition-all duration-500"
+                          style={{ width: `${predictionResult.probabilities.fake}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Display */}
+              {error && (
+                <div className="bg-red-500/10 border border-red-400/30 rounded-xl px-4 py-3 flex items-start gap-3">
+                  <span className="text-red-400 text-lg">⚠</span>
+                  <div>
+                    <p className="text-sm font-medium text-red-300">Error</p>
+                    <p className="text-xs text-slate-400 mt-1">{error}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-4">
@@ -471,16 +568,20 @@ export default function Home() {
           <div className="max-w-6xl mx-auto pt-4 pb-10">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-                <p className="text-2xl font-bold text-[#0cb9eb]">-</p>
+                <p className="text-2xl font-bold text-[#0cb9eb]">
+                  {predictionResult ? `${predictionResult.confidence.toFixed(1)}%` : '-'}
+                </p>
                 <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
-                  Detection Accuracy
+                  Detection Confidence
                 </p>
               </div>
 
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-                <p className="text-2xl font-bold text-[#0cb9eb]">-</p>
+                <p className="text-2xl font-bold text-[#0cb9eb]">
+                  {analysisTime > 0 ? `${analysisTime}s` : '-'}
+                </p>
                 <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
-                  Average Analysis
+                  Analysis Time
                 </p>
               </div>
             </div>
