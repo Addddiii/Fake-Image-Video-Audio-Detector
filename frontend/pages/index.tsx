@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import Navbar from '@/components/Navbar'
 import { auth, hasFirebaseConfig } from '@/utils/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
+import Head from 'next/head'
 
 type MediaType = 'image' | 'video' | 'audio'
 
@@ -213,8 +214,29 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-[#020617] via-[#0B1120] to-[#0F172A]">
-      <title>Fake Media Detection</title>
+<main className="min-h-screen bg-[#020617] relative overflow-hidden">
+  <Head>
+    <title>LatFakeCheck</title>
+    <link rel="icon" href="/assets/LFC-logo-trans.png" />
+  </Head>
+
+<div
+  className="pointer-events-none absolute inset-0 z-0"
+  style={{
+    backgroundSize: '100% 200%',
+    backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(12,185,235,0.28) 0%, transparent 65%)',
+    animation: 'drift 6s ease-in-out infinite'
+  }}
+/>
+
+<div
+  className="pointer-events-none absolute inset-0 z-0"
+  style={{
+    backgroundImage: 'radial-gradient(rgba(12,185,235,0.15) 1px, transparent 1px)',
+    backgroundSize: '28px 28px'
+  }}
+/>
+ 
       <Navbar />
 
       <div
@@ -228,7 +250,7 @@ export default function Home() {
           } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
         >
           <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-slate-500 font-semibold">
+            <p className="text-xs uppercase tracking-[0.25em] text-[#0cb9eb]/80 font-semibold">
               AI Detection Platform
             </p>
             <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white mt-3 max-w-3xl">
@@ -243,7 +265,7 @@ export default function Home() {
 
           {isLoggedIn && userName ? (
             <div className="bg-blue-500/10 border border-blue-400/20 rounded-2xl px-6 py-4 flex items-center gap-4 mt-20 shadow-[0_0_24px_rgba(59,130,246,0.08)]">
-              <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-300 font-bold text-lg shrink-0">
+              <div className="w-10 h-10 rounded-full bg-[#0cb9eb]/20 border border-[#0cb9eb]/40 flex items-center justify-center text-[#0cb9eb] font-bold text-lg shrink-0">
                 {userName.charAt(0).toUpperCase()}
               </div>
               <div>
@@ -258,7 +280,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
             <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col gap-5">
               <div>
-                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] font-semibold">
+                <p className="text-xs text-[#0cb9eb]/80 uppercase tracking-[0.2em] font-semibold">
                   Select media type
                 </p>
               </div>
@@ -273,7 +295,7 @@ export default function Home() {
                     }}
                     className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${
                       activeTab === tab
-                        ? 'bg-blue-500/25 border-blue-300/60 text-white shadow-[0_0_24px_rgba(59,130,246,0.22)]'
+                        ? 'bg-[#0cb9eb]/20 border-[#0cb9eb]/70 text-[#0cb9eb] shadow-[0_0_24px_rgba(12,185,235,0.3)]'
                         : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
                     }`}
                   >
@@ -334,7 +356,7 @@ export default function Home() {
                     ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
                     : dragging
                     ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
-                    : 'border-blue-400/20 bg-[#020617]/70 hover:border-blue-300/50 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(59,130,246,0.10)]'
+                    : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
                 }`}
               >
                 {file ? (
@@ -449,14 +471,14 @@ export default function Home() {
           <div className="max-w-6xl mx-auto pt-4 pb-10">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-                <p className="text-2xl font-bold text-white">-</p>
+                <p className="text-2xl font-bold text-[#0cb9eb]">-</p>
                 <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
                   Detection Accuracy
                 </p>
               </div>
 
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
-                <p className="text-2xl font-bold text-white">-</p>
+                <p className="text-2xl font-bold text-[#0cb9eb]">-</p>
                 <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
                   Average Analysis
                 </p>
