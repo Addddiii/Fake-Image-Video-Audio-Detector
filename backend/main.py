@@ -19,6 +19,9 @@ from model_inference import initialize_model, predict_image, get_model
 # Import video inference functions
 from video_inference import load_video_detector
 
+# Import audio inference functions
+from audio_inference import load_audio_detector
+
 # Load environment variables
 load_dotenv()
 
@@ -47,16 +50,18 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Model paths
 IMAGE_MODEL_PATH = os.getenv("IMAGE_MODEL_PATH", "deepfake_model.pth")
 VIDEO_MODEL_PATH = os.getenv("VIDEO_MODEL_PATH", "deepfake_video_model_best.pth")
+AUDIO_MODEL_PATH = os.getenv("AUDIO_MODEL_PATH", "best_audio_model.pth")
 
-# Global video detector instance
+# Global detector instances
 video_detector = None
+audio_detector = None
 
 
 # Startup event - initialize Firebase and ML models when server starts
 @app.on_event("startup")
 async def startup_event():
     """Initialize Firebase Admin SDK and ML models"""
-    global video_detector
+    global video_detector, audio_detector
     
     print("Starting backend...")
     initialize_firebase()
@@ -81,6 +86,17 @@ async def startup_event():
     else:
         print(f"⚠ Video model not found at {VIDEO_MODEL_PATH}")
     
+    # Initialize the audio detection model
+    if os.path.exists(AUDIO_MODEL_PATH):
+        try:
+            print(f"Loading audio model from: {AUDIO_MODEL_PATH}")
+            audio_detector = load_audio_detector(model_path=AUDIO_MODEL_PATH)
+            print("✓ Audio model loaded successfully!")
+        except Exception as e:
+            print(f"⚠ Could not load audio model: {e}")
+    else:
+        print(f"⚠ Audio model not found at {AUDIO_MODEL_PATH}")
+    
     print("Backend ready!")
 
 
@@ -104,12 +120,24 @@ def health_check():
     model = get_model()
     return {
         "status": "ok",
-        "model_loaded": model is not None,
-        "model_path": MODEL_PATH if model else "Model not loaded",
+        "models": {
+            "image": {
+                "loaded": model is not None,
+                "path": IMAGE_MODEL_PATH
+            },
+            "video": {
+                "loaded": video_detector is not None,
+                "path": VIDEO_MODEL_PATH
+            },
+            "audio": {
+                "loaded": audio_detector is not None,
+                "path": AUDIO_MODEL_PATH
+            }
+        },
         "endpoints": {
             "public": {
                 "/": "Health check",
-                "/upload": "Upload image and get fake/real prediction"
+                "/upload": "Upload image, video, or audio and get fake/real prediction"
             },
             "auth_verification": {
                 "/auth/verify": "Verify if user is logged in",
@@ -183,10 +211,10 @@ async def get_my_info(user: dict = Depends(get_current_user)):
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Upload image or video file and get fake/real prediction.
+    Upload image, video, or audio file and get fake/real prediction.
     
     Args:
-        file: Image file (jpg, png, webp) or video file (mp4, avi, mov)
+        file: Image file (jpg, png, webp), video file (mp4, avi, mov), or audio file (wav, mp3, flac)
     
     Returns:
         JSON with prediction results including:
@@ -198,11 +226,12 @@ async def upload_file(file: UploadFile = File(...)):
     # Determine file type
     is_image = file.content_type and file.content_type.startswith('image/')
     is_video = file.content_type and file.content_type.startswith('video/')
+    is_audio = file.content_type and file.content_type.startswith('audio/')
     
-    if not is_image and not is_video:
+    if not is_image and not is_video and not is_audio:
         raise HTTPException(
             status_code=400,
-            detail="Only image and video files are supported."
+            detail="Only image, video, and audio files are supported."
         )
     
     # Save file to uploads folder
@@ -270,6 +299,35 @@ async def upload_file(file: UploadFile = File(...)):
                     "filename": file.filename,
                     "content_type": file.content_type,
                     "message": "Video uploaded but prediction failed",
+                    "error": str(pred_error)
+                }
+        
+        elif is_audio:
+            # Check if audio model is loaded
+            if audio_detector is None:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "File uploaded successfully",
+                    "error": "Audio model not loaded"
+                }
+            
+            # Make prediction on the uploaded audio
+            try:
+                prediction_result = audio_detector.predict(file_path)
+                
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Audio analyzed successfully",
+                    "prediction": prediction_result
+                }
+            
+            except Exception as pred_error:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Audio uploaded but prediction failed",
                     "error": str(pred_error)
                 }
     

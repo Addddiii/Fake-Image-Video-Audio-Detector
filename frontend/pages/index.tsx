@@ -219,7 +219,7 @@ export default function Home() {
           setError('Invalid response from server. Please try again.')
           return
         }
-        
+
         setPredictionResult(data.prediction)
         setAnalysisTime(parseFloat(analysisTimeSeconds))
         setTotalAnalyses(prev => prev + 1)
@@ -340,8 +340,8 @@ export default function Home() {
                       removeFile()
                     }}
                     className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${activeTab === tab
-                        ? 'bg-[#0cb9eb]/20 border-[#0cb9eb]/70 text-[#0cb9eb] shadow-[0_0_24px_rgba(12,185,235,0.3)]'
-                        : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                      ? 'bg-[#0cb9eb]/20 border-[#0cb9eb]/70 text-[#0cb9eb] shadow-[0_0_24px_rgba(12,185,235,0.3)]'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
                       }`}
                   >
                     {tab}
@@ -433,8 +433,8 @@ export default function Home() {
                   <>
                     <div
                       className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${dragging
-                          ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
-                          : 'bg-white/5 text-blue-300 border-blue-400/20'
+                        ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
+                        : 'bg-white/5 text-blue-300 border-blue-400/20'
                         }`}
                     >
                       <span className="text-xl">↑</span>
@@ -459,8 +459,8 @@ export default function Home() {
                 onClick={handleUpload}
                 disabled={!file || !isLoggedIn || isAnalyzing}
                 className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${file && isLoggedIn && !isAnalyzing
-                    ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
-                    : 'bg-white/10 text-slate-400 cursor-not-allowed'
+                  ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
+                  : 'bg-white/10 text-slate-400 cursor-not-allowed'
                   }`}
               >
                 {isAnalyzing ? 'Analyzing...' : isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
@@ -476,8 +476,8 @@ export default function Home() {
                   <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-3">
                       <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${predictionResult.prediction === 'real'
-                          ? 'bg-green-500/20 border-2 border-green-400/50'
-                          : 'bg-red-500/20 border-2 border-red-400/50'
+                        ? 'bg-green-500/20 border-2 border-green-400/50'
+                        : 'bg-red-500/20 border-2 border-red-400/50'
                         }`}>
                         {predictionResult.prediction === 'real' ? '✓' : '⚠'}
                       </div>
