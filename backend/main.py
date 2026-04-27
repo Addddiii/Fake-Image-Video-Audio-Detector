@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 # Import authentication functions
 from auth import initialize_firebase, verify_firebase_token, get_current_user
 
+# Import model inference functions
+from model_inference import initialize_model, predict_image, get_model
+
 # Load environment variables
 load_dotenv()
 
@@ -38,13 +41,28 @@ app.add_middleware(
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Model path - set this to where your trained model is located
+# You can set via environment variable: MODEL_PATH=/path/to/your/deepfake_model.pth
+MODEL_PATH = os.getenv("MODEL_PATH", "deepfake_model.pth")
 
-# Startup event - initialize Firebase when server starts
+
+# Startup event - initialize Firebase and ML model when server starts
 @app.on_event("startup")
 async def startup_event():
-    """Initialize Firebase Admin SDK for token verification"""
+    """Initialize Firebase Admin SDK and ML model"""
     print("Starting backend...")
     initialize_firebase()
+    
+    # Initialize the ML model
+    print(f"Loading ML model from: {MODEL_PATH}")
+    model_loaded = initialize_model(MODEL_PATH)
+    
+    if model_loaded:
+        print("✓ ML model loaded successfully!")
+    else:
+        print("⚠ ML model not loaded - place your trained .pth file at:")
+        print(f"  {os.path.abspath(MODEL_PATH)}")
+    
     print("Backend ready!")
 
 
@@ -65,12 +83,15 @@ def read_root():
 @app.get("/health")
 def health_check():
     """Detailed health check"""
+    model = get_model()
     return {
         "status": "ok",
+        "model_loaded": model is not None,
+        "model_path": MODEL_PATH if model else "Model not loaded",
         "endpoints": {
             "public": {
                 "/": "Health check",
-                "/upload": "Upload files (no auth needed)"
+                "/upload": "Upload image and get fake/real prediction"
             },
             "auth_verification": {
                 "/auth/verify": "Verify if user is logged in",
@@ -144,21 +165,80 @@ async def get_my_info(user: dict = Depends(get_current_user)):
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Upload file to backend (currently public).
-    Later this can be protected using authentication.
+    Upload image file and get fake/real prediction.
+    
+    Args:
+        file: Image file (jpg, png, webp)
+    
+    Returns:
+        JSON with prediction results including:
+        - prediction: 'fake' or 'real'
+        - confidence: confidence percentage (0-100)
+        - probabilities: breakdown of fake and real probabilities
     """
-
+    
+    # Validate file type - only process images for now
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only image files are supported. Video and audio detection coming soon."
+        )
+    
     # Save file to uploads folder
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    return {
-        "filename": file.filename,
-        "content_type": file.content_type,
-        "message": "File uploaded successfully"
-    }
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Get model instance
+        model = get_model()
+        
+        if model is None:
+            # Model not loaded - return upload success without prediction
+            return {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "message": "File uploaded successfully",
+                "error": "Model not loaded - prediction unavailable. Please add your trained model file."
+            }
+        
+        # Make prediction on the uploaded image
+        try:
+            prediction_result = predict_image(file_path)
+            
+            return {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "message": "File uploaded and analyzed successfully",
+                "prediction": prediction_result
+            }
+        
+        except Exception as pred_error:
+            # Prediction failed but file was uploaded
+            return {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "message": "File uploaded but prediction failed",
+                "error": str(pred_error)
+            }
+    
+    except Exception as e:
+        # Clean up file if it was created
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing file: {str(e)}"
+        )
+    
+    finally:
+        # Optional: Clean up uploaded file after processing
+        # Uncomment these lines if you don't want to keep uploaded files
+        # if os.path.exists(file_path):
+        #     os.remove(file_path)
+        pass
 
 
 # Run the server
