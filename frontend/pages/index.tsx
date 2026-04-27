@@ -203,19 +203,31 @@ export default function Home() {
       const endTime = performance.now()
       const analysisTimeSeconds = ((endTime - startTime) / 1000).toFixed(2)
 
-      console.log(data)
+      console.log('Backend response:', data)
 
+      // Check if response has error
+      if (data.error) {
+        setError(data.error)
+        return
+      }
+
+      // Check if response has prediction
       if (data.prediction) {
+        // Validate prediction structure
+        if (!data.prediction.prediction || !data.prediction.confidence || !data.prediction.probabilities) {
+          console.error('Invalid prediction structure:', data.prediction)
+          setError('Invalid response from server. Please try again.')
+          return
+        }
+        
         setPredictionResult(data.prediction)
         setAnalysisTime(parseFloat(analysisTimeSeconds))
         setTotalAnalyses(prev => prev + 1)
-      } else if (data.error) {
-        setError(data.error)
       } else {
-        setError('Unable to analyze image. Please try again.')
+        setError(`Unable to analyze ${activeTab}. Please try again.`)
       }
     } catch (error) {
-      console.error(error)
+      console.error('Upload error:', error)
       setError('Upload failed. Please check if the backend server is running.')
     } finally {
       setIsAnalyzing(false)
@@ -455,7 +467,7 @@ export default function Home() {
               </button>
 
               {/* Prediction Results Display */}
-              {predictionResult && (
+              {predictionResult && predictionResult.prediction && predictionResult.probabilities && (
                 <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 animate-fadeIn">
                   <h3 className="text-sm font-bold text-[#0cb9eb] uppercase tracking-[0.2em] mb-4">
                     Analysis Result
@@ -472,7 +484,7 @@ export default function Home() {
                       <div>
                         <p className={`text-2xl font-bold ${predictionResult.prediction === 'real' ? 'text-green-400' : 'text-red-400'
                           }`}>
-                          {predictionResult.prediction === 'real' ? 'Real Image' : 'Fake/AI Generated'}
+                          {predictionResult.prediction === 'real' ? `Real ${capitalisedTab}` : 'Fake/AI Generated'}
                         </p>
                         <p className="text-sm text-slate-400">
                           {predictionResult.confidence}% confidence

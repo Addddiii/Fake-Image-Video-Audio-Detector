@@ -16,6 +16,9 @@ from auth import initialize_firebase, verify_firebase_token, get_current_user
 # Import model inference functions
 from model_inference import initialize_model, predict_image, get_model
 
+# Import video inference functions
+from video_inference import load_video_detector
+
 # Load environment variables
 load_dotenv()
 
@@ -41,27 +44,42 @@ app.add_middleware(
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Model path - set this to where your trained model is located
-# You can set via environment variable: MODEL_PATH=/path/to/your/deepfake_model.pth
-MODEL_PATH = os.getenv("MODEL_PATH", "deepfake_model.pth")
+# Model paths
+IMAGE_MODEL_PATH = os.getenv("IMAGE_MODEL_PATH", "deepfake_model.pth")
+VIDEO_MODEL_PATH = os.getenv("VIDEO_MODEL_PATH", "deepfake_video_model_best.pth")
+
+# Global video detector instance
+video_detector = None
 
 
-# Startup event - initialize Firebase and ML model when server starts
+# Startup event - initialize Firebase and ML models when server starts
 @app.on_event("startup")
 async def startup_event():
-    """Initialize Firebase Admin SDK and ML model"""
+    """Initialize Firebase Admin SDK and ML models"""
+    global video_detector
+    
     print("Starting backend...")
     initialize_firebase()
     
-    # Initialize the ML model
-    print(f"Loading ML model from: {MODEL_PATH}")
-    model_loaded = initialize_model(MODEL_PATH)
+    # Initialize the image detection model
+    print(f"Loading image model from: {IMAGE_MODEL_PATH}")
+    image_model_loaded = initialize_model(IMAGE_MODEL_PATH)
     
-    if model_loaded:
-        print("✓ ML model loaded successfully!")
+    if image_model_loaded:
+        print("✓ Image model loaded successfully!")
     else:
-        print("⚠ ML model not loaded - place your trained .pth file at:")
-        print(f"  {os.path.abspath(MODEL_PATH)}")
+        print("⚠ Image model not loaded")
+    
+    # Initialize the video detection model
+    if os.path.exists(VIDEO_MODEL_PATH):
+        try:
+            print(f"Loading video model from: {VIDEO_MODEL_PATH}")
+            video_detector = load_video_detector(model_path=VIDEO_MODEL_PATH)
+            print("✓ Video model loaded successfully!")
+        except Exception as e:
+            print(f"⚠ Could not load video model: {e}")
+    else:
+        print(f"⚠ Video model not found at {VIDEO_MODEL_PATH}")
     
     print("Backend ready!")
 
@@ -165,10 +183,10 @@ async def get_my_info(user: dict = Depends(get_current_user)):
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Upload image file and get fake/real prediction.
+    Upload image or video file and get fake/real prediction.
     
     Args:
-        file: Image file (jpg, png, webp)
+        file: Image file (jpg, png, webp) or video file (mp4, avi, mov)
     
     Returns:
         JSON with prediction results including:
@@ -177,11 +195,14 @@ async def upload_file(file: UploadFile = File(...)):
         - probabilities: breakdown of fake and real probabilities
     """
     
-    # Validate file type - only process images for now
-    if not file.content_type or not file.content_type.startswith('image/'):
+    # Determine file type
+    is_image = file.content_type and file.content_type.startswith('image/')
+    is_video = file.content_type and file.content_type.startswith('video/')
+    
+    if not is_image and not is_video:
         raise HTTPException(
             status_code=400,
-            detail="Only image files are supported. Video and audio detection coming soon."
+            detail="Only image and video files are supported."
         )
     
     # Save file to uploads folder
@@ -191,37 +212,66 @@ async def upload_file(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Get model instance
-        model = get_model()
-        
-        if model is None:
-            # Model not loaded - return upload success without prediction
-            return {
-                "filename": file.filename,
-                "content_type": file.content_type,
-                "message": "File uploaded successfully",
-                "error": "Model not loaded - prediction unavailable. Please add your trained model file."
-            }
-        
-        # Make prediction on the uploaded image
-        try:
-            prediction_result = predict_image(file_path)
+        # Process based on file type
+        if is_image:
+            # Get image model instance
+            model = get_model()
             
-            return {
-                "filename": file.filename,
-                "content_type": file.content_type,
-                "message": "File uploaded and analyzed successfully",
-                "prediction": prediction_result
-            }
+            if model is None:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "File uploaded successfully",
+                    "error": "Image model not loaded"
+                }
+            
+            # Make prediction on the uploaded image
+            try:
+                prediction_result = predict_image(file_path)
+                
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Image analyzed successfully",
+                    "prediction": prediction_result
+                }
+            
+            except Exception as pred_error:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Image uploaded but prediction failed",
+                    "error": str(pred_error)
+                }
         
-        except Exception as pred_error:
-            # Prediction failed but file was uploaded
-            return {
-                "filename": file.filename,
-                "content_type": file.content_type,
-                "message": "File uploaded but prediction failed",
-                "error": str(pred_error)
-            }
+        elif is_video:
+            # Check if video model is loaded
+            if video_detector is None:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "File uploaded successfully",
+                    "error": "Video model not loaded"
+                }
+            
+            # Make prediction on the uploaded video
+            try:
+                prediction_result = video_detector.predict(file_path)
+                
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Video analyzed successfully",
+                    "prediction": prediction_result
+                }
+            
+            except Exception as pred_error:
+                return {
+                    "filename": file.filename,
+                    "content_type": file.content_type,
+                    "message": "Video uploaded but prediction failed",
+                    "error": str(pred_error)
+                }
     
     except Exception as e:
         # Clean up file if it was created
@@ -235,7 +285,6 @@ async def upload_file(file: UploadFile = File(...)):
     
     finally:
         # Optional: Clean up uploaded file after processing
-        # Uncomment these lines if you don't want to keep uploaded files
         # if os.path.exists(file_path):
         #     os.remove(file_path)
         pass
