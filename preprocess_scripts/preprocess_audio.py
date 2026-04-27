@@ -1,107 +1,79 @@
-import os
 from pathlib import Path
-
-import librosa
-import librosa.display
-import matplotlib.pyplot as plt
 import numpy as np
+import librosa
+from tqdm import tqdm
 
-# =========================
-# CONFIG
-# =========================
-RAW_ROOT = r"D:\FakeDetection\raw_datasets\audio\asvspoof2019"
-OUT_ROOT = r"D:\FakeDetection\processed_datasets\audio"
+RAW_BASE = Path(r"D:\audio\raw")
+PROCESSED_BASE = Path(r"D:\audio\processed")
 
-RAW_TO_OUT_SPLIT = {
-    "train": "train",
-    "dev": "eval",
-    "test": "test"
-}
+SPLITS = ["train", "dev", "eval"]   # change if you really use test instead of dev
+LABELS = ["real", "fake"]
 
-AUDIO_EXTENSIONS = [".flac", ".wav", ".mp3"]
-FIG_SIZE = (3, 3)
-DPI = 75
-MAX_FILES_PER_CLASS = None   # set to 100 for testing
+TARGET_SR = 16000
+N_MELS = 128
+N_FFT = 1024
+HOP_LENGTH = 256
+DURATION = 4.0   # seconds
+FIXED_SAMPLES = int(TARGET_SR * DURATION)
 
-# =========================
-# HELPERS
-# =========================
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
+AUDIO_EXTS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac"}
 
-def find_audio_files(folder):
-    files = []
-    for root, _, filenames in os.walk(folder):
-        for f in filenames:
-            if Path(f).suffix.lower() in AUDIO_EXTENSIONS:
-                files.append(os.path.join(root, f))
-    return files
 
-def save_mel_spectrogram(audio_path, out_path):
-    try:
-        y, sr = librosa.load(audio_path, sr=None)
+def load_and_fix_length(file_path: Path, sr: int, fixed_samples: int):
+    audio, _ = librosa.load(file_path, sr=sr, mono=True)
 
-        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+    if len(audio) < fixed_samples:
+        pad = fixed_samples - len(audio)
+        audio = np.pad(audio, (0, pad), mode="constant")
+    else:
+        audio = audio[:fixed_samples]
 
-        plt.figure(figsize=FIG_SIZE)
-        librosa.display.specshow(mel_spec_db, sr=sr)
-        plt.axis("off")
-        plt.tight_layout(pad=0)
-        plt.savefig(out_path, bbox_inches="tight", pad_inches=0, dpi=DPI)
-        plt.close("all")
+    return audio
 
-        return True
-    except Exception as e:
-        print(f"Error processing {audio_path}: {e}")
-        return False
 
-def process_split(raw_split, out_split):
-    for class_name in ["real", "fake"]:
-        in_dir = os.path.join(RAW_ROOT, raw_split, class_name)
-        out_dir = os.path.join(OUT_ROOT, out_split, class_name)
+def make_log_mel(audio: np.ndarray, sr: int):
+    mel = librosa.feature.melspectrogram(
+        y=audio,
+        sr=sr,
+        n_fft=N_FFT,
+        hop_length=HOP_LENGTH,
+        n_mels=N_MELS,
+        power=2.0,
+    )
+    log_mel = librosa.power_to_db(mel, ref=np.max)
+    return log_mel.astype(np.float32)
 
-        ensure_dir(out_dir)
 
-        if not os.path.exists(in_dir):
-            print(f"Missing input folder: {in_dir}")
-            continue
+def main():
+    total_done = 0
 
-        audio_files = find_audio_files(in_dir)
+    for split in SPLITS:
+        for label in LABELS:
+            in_dir = RAW_BASE / split / label
+            out_dir = PROCESSED_BASE / split / label
+            out_dir.mkdir(parents=True, exist_ok=True)
 
-        if MAX_FILES_PER_CLASS is not None:
-            audio_files = audio_files[:MAX_FILES_PER_CLASS]
-
-        total = len(audio_files)
-        count = 0
-
-        print(f"\nProcessing {raw_split}/{class_name} → {out_split}/{class_name}")
-        print(f"Total files: {total}\n")
-
-        for audio_path in audio_files:
-            file_name = Path(audio_path).stem + ".png"
-            out_path = os.path.join(out_dir, file_name)
-
-            if os.path.exists(out_path):
-                count += 1
-                percent = (count / total) * 100
-                print(f"Skipping {file_name} ({count}/{total}) {percent:.1f}%")
+            if not in_dir.exists():
+                print(f"Skipping missing folder: {in_dir}")
                 continue
 
-            ok = save_mel_spectrogram(audio_path, out_path)
-            if ok:
-                count += 1
-                percent = (count / total) * 100
-                print(f"[{out_split}][{class_name}] {count}/{total} ({percent:.1f}%) -> {file_name}")
+            files = [f for f in in_dir.iterdir() if f.is_file() and f.suffix.lower() in AUDIO_EXTS]
+            print(f"\nProcessing {split}/{label} -> {len(files)} files")
 
-# =========================
-# MAIN
-# =========================
-def main():
-    for raw_split, out_split in RAW_TO_OUT_SPLIT.items():
-        process_split(raw_split, out_split)
+            for file_path in tqdm(files):
+                try:
+                    audio = load_and_fix_length(file_path, TARGET_SR, FIXED_SAMPLES)
+                    log_mel = make_log_mel(audio, TARGET_SR)
 
-    print("\nAudio preprocessing done.")
+                    out_path = out_dir / f"{file_path.stem}.npy"
+                    np.save(out_path, log_mel)
+
+                    total_done += 1
+                except Exception as e:
+                    print(f"Failed: {file_path} | {e}")
+
+    print(f"\nDone. Processed {total_done} files.")
+
 
 if __name__ == "__main__":
     main()
