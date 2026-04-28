@@ -7,7 +7,7 @@ import Image from 'next/image'
 
 const privateNavItems = [
   { label: 'Results', href: '#' },
-  { label: 'History', href: '#' },
+  { label: 'History', href: '/history' },
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'About', href: '#' }
 ]

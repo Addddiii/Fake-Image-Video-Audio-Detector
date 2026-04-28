@@ -3,6 +3,7 @@ import Navbar from '@/components/Navbar'
 import { auth, hasFirebaseConfig } from '@/utils/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
 import Head from 'next/head'
+import { addHistoryEntry, getHistoryEntries } from '@/utils/historyStorage'
 
 type MediaType = 'image' | 'video' | 'audio'
 
@@ -97,10 +98,16 @@ export default function Home() {
 
       if (user) {
         setLoginPrompt('')
+        const userKey = user.uid || user.email || ''
+        setTotalAnalyses(getHistoryEntries(userKey).length)
       } else {
         setFile(null)
         setPreview(null)
         setDragging(false)
+        setPredictionResult(null)
+        setAnalysisTime(0)
+        setError(null)
+        setTotalAnalyses(0)
       }
     })
 
@@ -134,7 +141,12 @@ export default function Home() {
 
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
-    if (dropped) setFile(dropped)
+    if (dropped) {
+      setFile(dropped)
+      setPredictionResult(null)
+      setError(null)
+      setAnalysisTime(0)
+    }
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,13 +156,20 @@ export default function Home() {
     }
 
     const selected = e.target.files?.[0]
-    if (selected) setFile(selected)
+    if (selected) {
+      setFile(selected)
+      setPredictionResult(null)
+      setError(null)
+      setAnalysisTime(0)
+    }
   }
 
   const removeFile = () => {
     setFile(null)
     setPredictionResult(null)
     setError(null)
+    setAnalysisTime(0)
+
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -168,8 +187,11 @@ export default function Home() {
   const handleUpload = async () => {
     if (!file) return
 
+    setError(null)
+    setPredictionResult(null)
+
     if (!hasFirebaseConfig || !auth) {
-      alert('Firebase is not configured yet.')
+      setError('Firebase is not configured yet.')
       return
     }
 
@@ -180,17 +202,14 @@ export default function Home() {
       return
     }
 
-    setIsAnalyzing(true)
-    setPredictionResult(null)
-    setError(null)
-
-    const startTime = performance.now()
-
     const token = await user.getIdToken()
     const formData = new FormData()
     formData.append('file', file)
 
     try {
+      setIsAnalyzing(true)
+      const startTime = performance.now()
+
       const response = await fetch('http://127.0.0.1:8000/upload', {
         method: 'POST',
         headers: {
@@ -203,32 +222,39 @@ export default function Home() {
       const endTime = performance.now()
       const analysisTimeSeconds = ((endTime - startTime) / 1000).toFixed(2)
 
-      console.log('Backend response:', data)
-
-      // Check if response has error
-      if (data.error) {
-        setError(data.error)
+      if (!response.ok) {
+        setError(data?.detail || 'Upload failed. Please try again.')
+        setAnalysisTime(parseFloat(analysisTimeSeconds))
         return
       }
 
-      // Check if response has prediction
-      if (data.prediction) {
-        // Validate prediction structure
-        if (!data.prediction.prediction || !data.prediction.confidence || !data.prediction.probabilities) {
-          console.error('Invalid prediction structure:', data.prediction)
-          setError('Invalid response from server. Please try again.')
-          return
-        }
-
-        setPredictionResult(data.prediction)
+      if (!data?.prediction?.prediction || !data?.prediction?.probabilities) {
+        setError(data?.error || 'Analysis result was not returned by the server.')
         setAnalysisTime(parseFloat(analysisTimeSeconds))
-        setTotalAnalyses(prev => prev + 1)
-      } else {
-        setError(`Unable to analyze ${activeTab}. Please try again.`)
+        return
       }
-    } catch (error) {
-      console.error('Upload error:', error)
-      setError('Upload failed. Please check if the backend server is running.')
+
+      setPredictionResult(data.prediction)
+      setAnalysisTime(parseFloat(analysisTimeSeconds))
+
+      const userKey = user.uid || user.email || ''
+      if (userKey) {
+        const updatedHistory = addHistoryEntry(userKey, {
+          fileName: file.name,
+          mediaType: activeTab,
+          verdict: data.prediction.prediction,
+          confidence: data.prediction.confidence,
+          fakeProbability: data.prediction.probabilities.fake,
+          realProbability: data.prediction.probabilities.real,
+          analysisTime: parseFloat(analysisTimeSeconds),
+          analyzedAt: new Date().toISOString(),
+        })
+
+        setTotalAnalyses(updatedHistory.length)
+      }
+    } catch (uploadError) {
+      console.error(uploadError)
+      setError('Something went wrong while uploading or analysing the file.')
     } finally {
       setIsAnalyzing(false)
     }
@@ -288,12 +314,14 @@ export default function Home() {
       <Navbar />
 
       <div
-        className={`transition-all duration-700 ease-out ${pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-          }`}
+        className={`transition-all duration-700 ease-out ${
+          pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+        }`}
       >
         <div
-          className={`max-w-6xl mx-auto px-8 ${isLoggedIn ? 'pt-12' : 'pt-8'
-            } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
+          className={`max-w-6xl mx-auto px-8 ${
+            isLoggedIn ? 'pt-12' : 'pt-8'
+          } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
         >
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-[#0cb9eb]/80 font-semibold">
@@ -316,7 +344,11 @@ export default function Home() {
               </div>
               <div>
                 <p className="text-white font-semibold text-base">Welcome back, {userName}</p>
-                <p className="text-slate-400 text-xs mt-0.5">Ready to analyse some media?</p>
+                <p className="text-slate-400 text-xs mt-0.5">
+                  {totalAnalyses > 0
+                    ? `${totalAnalyses} saved scan${totalAnalyses === 1 ? '' : 's'} in your history.`
+                    : 'Ready to analyse some media?'}
+                </p>
               </div>
             </div>
           ) : null}
@@ -326,23 +358,24 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
             <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 flex flex-col gap-5">
               <div>
-                <p className="text-xs text-[#0cb9eb]/80 uppercase tracking-[0.2em] font-semibold">
+                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] font-semibold">
                   Select media type
                 </p>
               </div>
 
               <div className="flex gap-2 flex-wrap">
-                {tabs.map(tab => (
+                {tabs.map((tab) => (
                   <button
                     key={tab}
                     onClick={() => {
                       setActiveTab(tab)
                       removeFile()
                     }}
-                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${activeTab === tab
-                      ? 'bg-[#0cb9eb]/20 border-[#0cb9eb]/70 text-[#0cb9eb] shadow-[0_0_24px_rgba(12,185,235,0.3)]'
-                      : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
-                      }`}
+                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${
+                      activeTab === tab
+                        ? 'bg-blue-500/25 border-blue-300/60 text-white shadow-[0_0_24px_rgba(59,130,246,0.22)]'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                    }`}
                   >
                     {tab}
                   </button>
@@ -394,13 +427,15 @@ export default function Home() {
                 }}
                 onDrop={handleDrop}
                 onClick={handleUploadAreaClick}
-                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${isLoggedIn && !file ? 'cursor-pointer' : ''
-                  } ${!isLoggedIn
+                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
+                  isLoggedIn && !file ? 'cursor-pointer' : ''
+                } ${
+                  !isLoggedIn
                     ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
                     : dragging
-                      ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
-                      : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
-                  }`}
+                    ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
+                    : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
+                }`}
               >
                 {file ? (
                   <div className="flex flex-col items-center gap-3 px-4 text-center">
@@ -432,10 +467,11 @@ export default function Home() {
                 ) : (
                   <>
                     <div
-                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${dragging
-                        ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
-                        : 'bg-white/5 text-blue-300 border-blue-400/20'
-                        }`}
+                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${
+                        dragging
+                          ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
+                          : 'bg-white/5 text-blue-300 border-blue-400/20'
+                      }`}
                     >
                       <span className="text-xl">↑</span>
                     </div>
@@ -458,15 +494,19 @@ export default function Home() {
               <button
                 onClick={handleUpload}
                 disabled={!file || !isLoggedIn || isAnalyzing}
-                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${file && isLoggedIn && !isAnalyzing
-                  ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
-                  : 'bg-white/10 text-slate-400 cursor-not-allowed'
-                  }`}
+                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${
+                  file && isLoggedIn && !isAnalyzing
+                    ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
+                    : 'bg-white/10 text-slate-400 cursor-not-allowed'
+                }`}
               >
-                {isAnalyzing ? 'Analyzing...' : isLoggedIn ? `Analyse ${capitalisedTab}` : 'Log in to analyse'}
+                {isAnalyzing
+                  ? 'Analyzing...'
+                  : isLoggedIn
+                  ? `Analyse ${capitalisedTab}`
+                  : 'Log in to analyse'}
               </button>
 
-              {/* Prediction Results Display */}
               {predictionResult && predictionResult.prediction && predictionResult.probabilities && (
                 <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6 animate-fadeIn">
                   <h3 className="text-sm font-bold text-[#0cb9eb] uppercase tracking-[0.2em] mb-4">
@@ -475,29 +515,45 @@ export default function Home() {
 
                   <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-3">
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${predictionResult.prediction === 'real'
-                        ? 'bg-green-500/20 border-2 border-green-400/50'
-                        : 'bg-red-500/20 border-2 border-red-400/50'
-                        }`}>
+                      <div
+                        className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
+                          predictionResult.prediction === 'real'
+                            ? 'bg-green-500/20 border-2 border-green-400/50'
+                            : 'bg-red-500/20 border-2 border-red-400/50'
+                        }`}
+                      >
                         {predictionResult.prediction === 'real' ? '✓' : '⚠'}
                       </div>
                       <div>
-                        <p className={`text-2xl font-bold ${predictionResult.prediction === 'real' ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                          {predictionResult.prediction === 'real' ? `Real ${capitalisedTab}` : 'Fake/AI Generated'}
+                        <p
+                          className={`text-2xl font-bold ${
+                            predictionResult.prediction === 'real'
+                              ? 'text-green-400'
+                              : 'text-red-400'
+                          }`}
+                        >
+                          {predictionResult.prediction === 'real' ? 'AUTHENTIC' : 'FAKE'}
                         </p>
-                        <p className="text-sm text-slate-400">
-                          {predictionResult.confidence}% confidence
+                        <p className="text-slate-400 text-sm">
+                          Confidence: {predictionResult.confidence}%
                         </p>
                       </div>
                     </div>
+                    <div className="text-right">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide">
+                        Analysis Time
+                      </p>
+                      <p className="text-white font-semibold">{analysisTime.toFixed(2)}s</p>
+                    </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-slate-400">Real Probability</span>
-                        <span className="text-green-400 font-semibold">{predictionResult.probabilities.real}%</span>
+                        <span className="text-green-400 font-semibold">
+                          {predictionResult.probabilities.real}%
+                        </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
                         <div
@@ -510,7 +566,9 @@ export default function Home() {
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-slate-400">Fake Probability</span>
-                        <span className="text-red-400 font-semibold">{predictionResult.probabilities.fake}%</span>
+                        <span className="text-red-400 font-semibold">
+                          {predictionResult.probabilities.fake}%
+                        </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
                         <div
@@ -523,7 +581,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Error Display */}
               {error && (
                 <div className="bg-red-500/10 border border-red-400/30 rounded-xl px-4 py-3 flex items-start gap-3">
                   <span className="text-red-400 text-lg">⚠</span>
@@ -578,7 +635,7 @@ export default function Home() {
           </div>
 
           <div className="max-w-6xl mx-auto pt-4 pb-10">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
                 <p className="text-2xl font-bold text-[#0cb9eb]">
                   {predictionResult ? `${predictionResult.confidence.toFixed(1)}%` : '-'}
@@ -590,10 +647,19 @@ export default function Home() {
 
               <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
                 <p className="text-2xl font-bold text-[#0cb9eb]">
-                  {analysisTime > 0 ? `${analysisTime}s` : '-'}
+                  {analysisTime > 0 ? `${analysisTime.toFixed(2)}s` : '-'}
                 </p>
                 <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
                   Analysis Time
+                </p>
+              </div>
+
+              <div className="bg-[#111827]/90 rounded-2xl border border-white/10 shadow-xl p-5 text-center">
+                <p className="text-2xl font-bold text-[#0cb9eb]">
+                  {isLoggedIn ? totalAnalyses : '-'}
+                </p>
+                <p className="text-xs text-slate-400 uppercase tracking-[0.2em] mt-2">
+                  Saved History Items
                 </p>
               </div>
             </div>
