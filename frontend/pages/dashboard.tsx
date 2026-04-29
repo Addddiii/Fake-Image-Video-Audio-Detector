@@ -1,6 +1,11 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/router'
 import Navbar from '@/components/Navbar'
+import { auth } from '@/utils/firebase'
+import { onAuthStateChanged } from 'firebase/auth'
+import { HistoryEntry, getHistoryEntries } from '@/utils/historyStorage'
 import {
   BarChart,
   Bar,
@@ -13,26 +18,6 @@ import {
   Cell,
   Legend,
 } from 'recharts'
-
-// PLACE HOLDER DATA
-const summaryStats = [
-  { label: 'Total Scans', value: '21', delta: '+3 this week' },
-  { label: 'Fakes Detected', value: '4', delta: '19% of total' },
-  { label: 'Avg Confidence', value: '86%', delta: '+2% vs last week' },
-  { label: 'Avg Processing', value: '2.4s', delta: 'Per file' },
-]
-
-const mediaTypeData = [
-  { name: 'Image', scans: 12 },
-  { name: 'Video', scans: 5 },
-  { name: 'Audio', scans: 4 },
-]
-
-const verdictData = [
-  { name: 'Authentic', value: 55 },
-  { name: 'Fake', value: 31 },
-  { name: 'Suspicious', value: 14 },
-]
 
 const BAR_COLORS = ['#3b82f6', '#a78bfa', '#f59e0b']
 const PIE_COLORS = ['#3b82f6', '#a78bfa', '#f59e0b']
@@ -62,12 +47,97 @@ const PieTooltip = ({ active, payload }: any) => {
 }
 
 export default function Dashboard() {
+  const router = useRouter()
+  const [entries, setEntries] = useState<HistoryEntry[]>([])
+
+  useEffect(() => {
+    if (!auth) return
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        router.replace('/login')
+        return
+      }
+      const userKey = user.uid || user.email || ''
+      setEntries(getHistoryEntries(userKey))
+    })
+
+    return unsubscribe
+  }, [router])
+  const totalScans = entries.length
+  const fakesDetected = entries.filter(e => e.verdict === 'fake').length
+  const avgConfidence = totalScans > 0
+    ? (entries.reduce((sum, e) => sum + e.confidence, 0) / totalScans).toFixed(1) + '%'
+    : '—'
+  const avgProcessing = totalScans > 0
+    ? (entries.reduce((sum, e) => sum + e.analysisTime, 0) / totalScans).toFixed(2) + 's'
+    : '—'
+
+  const summaryStats = [
+    {
+      label: 'Total Scans',
+      value: totalScans > 0 ? String(totalScans) : '—',
+      delta: totalScans > 0 ? 'All time' : 'No scans yet',
+    },
+    {
+      label: 'Fakes Detected',
+      value: totalScans > 0 ? String(fakesDetected) : '—',
+      delta: totalScans > 0 ? `${((fakesDetected / totalScans) * 100).toFixed(0)}% of total` : 'No scans yet',
+    },
+    {
+      label: 'Avg Confidence',
+      value: avgConfidence,
+      delta: 'Per scan',
+    },
+    {
+      label: 'Avg Processing',
+      value: avgProcessing,
+      delta: 'Per file',
+    },
+  ]
+
+  const mediaTypeData = [
+    { name: 'Image', scans: entries.filter(e => e.mediaType === 'image').length },
+    { name: 'Video', scans: entries.filter(e => e.mediaType === 'video').length },
+    { name: 'Audio', scans: entries.filter(e => e.mediaType === 'audio').length },
+  ]
+
+  const realCount = entries.filter(e => e.verdict === 'real').length
+  const fakeCount = entries.filter(e => e.verdict === 'fake').length
+  const verdictTotal = realCount + fakeCount
+  const verdictData = verdictTotal > 0
+    ? [
+        { name: 'Authentic', value: Math.round((realCount / verdictTotal) * 100) },
+        { name: 'Fake', value: Math.round((fakeCount / verdictTotal) * 100) },
+      ]
+    : [
+        { name: 'Authentic', value: 0 },
+        { name: 'Fake', value: 0 },
+      ]
+
   return (
-    <main className="min-h-screen bg-gradient-to-b from-[#020617] via-[#0B1120] to-[#0F172A]">
+    <main className="min-h-screen bg-[#020617] relative overflow-hidden">
       <title>Dashboard — Fake Media Detection</title>
+
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          backgroundSize: '100% 200%',
+          backgroundImage: 'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(12,185,235,0.28) 0%, transparent 65%)',
+        }}
+      />
+
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          backgroundImage: 'radial-gradient(rgba(12,185,235,0.15) 1px, transparent 1px)',
+          backgroundSize: '28px 28px',
+        }}
+      />
+
       <Navbar />
 
-      <div className="max-w-6xl mx-auto px-8 pt-10 pb-16">
+      <div className="relative z-10 max-w-6xl mx-auto px-8 pt-10 pb-16">
 
         <p className="text-xs uppercase tracking-[0.25em] text-blue-400 font-semibold mb-2">
           Overview
@@ -169,3 +239,4 @@ export default function Dashboard() {
     </main>
   )
 }
+

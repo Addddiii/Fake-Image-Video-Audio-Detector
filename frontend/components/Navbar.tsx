@@ -6,10 +6,10 @@ import { auth } from '@/utils/firebase'
 import Image from 'next/image'
 
 const privateNavItems = [
-  { label: 'Results', href: '#' },
+  { label: 'Scan', href: '/' },
   { label: 'History', href: '/history' },
   { label: 'Dashboard', href: '/dashboard' },
-  { label: 'About', href: '#' }
+  { label: 'About', href: '/about' }
 ]
 
 export default function Navbar() {
