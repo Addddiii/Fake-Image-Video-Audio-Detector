@@ -1,6 +1,8 @@
 """
-Model Inference Module for Fake Image Detection
-Loads the trained model and makes predictions on uploaded images
+Image Deepfake Detection Inference
+
+This module loads a trained image classification model and performs
+fake vs real prediction on input images.
 """
 
 import torch
@@ -10,8 +12,8 @@ import os
 from typing import Dict
 import logging
 
-# Import shared model architecture (same as used in training)
-from model_architecture import create_fake_detection_model
+# Import the same model architecture used during training
+from architectures.image_model import create_fake_detection_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,57 +21,64 @@ logger = logging.getLogger(__name__)
 
 class FakeImageDetector:
     """
-    Wrapper class for the PyTorch fake image detection model
-    Uses the same architecture as train_image.py for compatibility
+    Handles model loading, image preprocessing, and prediction.
+    The architecture must match the one used during training.
     """
     
     def __init__(self, model_path: str, device: str = None):
         """
-        Initialize the model
-        
+        Initialize the detector with model weights and device.
+
         Args:
-            model_path: Path to the .pth model file (trained weights)
-            device: Device to run inference on ('cuda' or 'cpu'). Auto-detect if None.
+            model_path: Path to the trained .pth file
+            device: 'cuda' or 'cpu'. If None, automatically selects available device
         """
         self.model_path = model_path
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = None
         self.transform = None
-        self.class_names = ['fake', 'real']  # Based on ImageFolder alphabetical order
+
+        # Class order must match training dataset
+        self.class_names = ['fake', 'real']
         
         self._load_model()
         self._setup_transforms()
         
     def _load_model(self):
-        """Load the trained PyTorch model"""
+        """
+        Load the trained model weights into the architecture.
+        """
         try:
             logger.info(f"Loading model from {self.model_path}")
             
-            # Create model with same architecture as training (EfficientNet-B0)
-            # pretrained=False because we're loading our own trained weights
+            # Create model architecture
             self.model = create_fake_detection_model(num_classes=2, pretrained=False)
             
-            # Load the trained weights from .pth file
-            checkpoint = torch.load(self.model_path, map_location=self.device)
+            # Load checkpoint
+            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
             
-            # Handle different checkpoint formats
+            # Support both plain state_dict and checkpoint dict formats
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                 self.model.load_state_dict(checkpoint['model_state_dict'])
-                logger.info(f"Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+                logger.info(f"Checkpoint loaded (epoch: {checkpoint.get('epoch', 'unknown')})")
             else:
                 self.model.load_state_dict(checkpoint)
             
+            # Move model to device and set evaluation mode
             self.model = self.model.to(self.device)
-            self.model.eval()  # Set to evaluation mode (disables dropout, etc.)
+            self.model.eval()
             
-            logger.info(f"✓ Model loaded successfully on {self.device}")
+            logger.info(f"Model ready on {self.device}")
             
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             raise
     
     def _setup_transforms(self):
-        """Setup image preprocessing transforms (same as training)"""
+        """
+        Define image preprocessing steps.
+        These must match the transformations used during training.
+        """
         self.transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -81,54 +90,51 @@ class FakeImageDetector:
     
     def preprocess_image(self, image_path: str) -> torch.Tensor:
         """
-        Preprocess an image for model input
-        
+        Load and preprocess an image for model input.
+
         Args:
-            image_path: Path to the image file
-            
+            image_path: Path to image file
+
         Returns:
-            Preprocessed image tensor
+            Tensor ready for model inference
         """
         try:
             image = Image.open(image_path).convert('RGB')
             image_tensor = self.transform(image)
-            image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
+
+            # Add batch dimension
+            image_tensor = image_tensor.unsqueeze(0)
+
             return image_tensor.to(self.device)
+
         except Exception as e:
             logger.error(f"Error preprocessing image: {e}")
             raise
     
     def predict(self, image_path: str) -> Dict:
         """
-        Make a prediction on an image
-        
+        Perform prediction on a single image.
+
         Args:
-            image_path: Path to the image file
-            
+            image_path: Path to image file
+
         Returns:
-            Dictionary containing prediction results:
-            {
-                'prediction': 'fake' or 'real',
-                'confidence': float (0-100),
-                'probabilities': {
-                    'fake': float (0-100),
-                    'real': float (0-100)
-                }
-            }
+            Dictionary with prediction, confidence, and probabilities
         """
         try:
-            # Preprocess image
+            # Prepare input
             image_tensor = self.preprocess_image(image_path)
             
-            # Make prediction
+            # Run inference
             with torch.no_grad():
                 outputs = self.model(image_tensor)
                 probabilities = torch.softmax(outputs, dim=1)
                 confidence, predicted_class = torch.max(probabilities, 1)
             
-            # Convert to percentages
+            # Convert probabilities to percentages
             fake_prob = probabilities[0][0].item() * 100
             real_prob = probabilities[0][1].item() * 100
+
             predicted_label = self.class_names[predicted_class.item()]
             confidence_percent = confidence.item() * 100
             
@@ -141,7 +147,7 @@ class FakeImageDetector:
                 }
             }
             
-            logger.info(f"Prediction: {predicted_label} ({confidence_percent:.2f}% confidence)")
+            logger.info(f"Prediction: {predicted_label} ({confidence_percent:.2f}%)")
             
             return result
             
@@ -150,28 +156,32 @@ class FakeImageDetector:
             raise
 
 
-# Global model instance (loaded once when server starts)
+# Global model instance (loaded once at startup)
 _model_instance = None
 
 
 def initialize_model(model_path: str):
     """
-    Initialize the global model instance
-    
+    Load the model once and store it globally.
+
     Args:
-        model_path: Path to the .pth model file
+        model_path: Path to model file
+
+    Returns:
+        True if loaded successfully, False otherwise
     """
     global _model_instance
     
     if not os.path.exists(model_path):
         logger.warning(f"Model file not found at {model_path}")
-        logger.warning("Predictions will not be available. Place your trained model at this path.")
+        logger.warning("Image predictions will not be available.")
         return False
     
     try:
         _model_instance = FakeImageDetector(model_path)
-        logger.info("✓ Model initialized successfully")
+        logger.info("Image model initialized")
         return True
+
     except Exception as e:
         logger.error(f"Failed to initialize model: {e}")
         return False
@@ -179,26 +189,26 @@ def initialize_model(model_path: str):
 
 def get_model() -> FakeImageDetector:
     """
-    Get the global model instance
-    
+    Retrieve the global model instance.
+
     Returns:
-        FakeImageDetector instance or None if not initialized
+        Model instance or None if not initialized
     """
     return _model_instance
 
 
 def predict_image(image_path: str) -> Dict:
     """
-    Make a prediction on an image using the global model
-    
+    Run prediction using the global model instance.
+
     Args:
-        image_path: Path to the image file
-        
+        image_path: Path to image file
+
     Returns:
-        Dictionary containing prediction results
-        
+        Prediction result dictionary
+
     Raises:
-        RuntimeError: If model is not initialized
+        RuntimeError if model is not initialized
     """
     if _model_instance is None:
         raise RuntimeError("Model not initialized. Call initialize_model() first.")

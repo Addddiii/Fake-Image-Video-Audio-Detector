@@ -1,86 +1,135 @@
+# ============================================================
+# Video Frame Preprocessing Script
+# ============================================================
+
 import os
 import cv2
+import random
+from pathlib import Path
+from tqdm import tqdm
 
-# =========================
-# PATHS (UPDATED)
-# =========================
-RAW_ROOT = r"D:\video\raw"
-OUT_ROOT = r"D:\video\processed"
+INPUT_ROOT = r"D:\Videos"
+OUTPUT_ROOT = r"D:\Videos_Processed"
 
 FRAMES_PER_VIDEO = 20
-IMG_SIZE = (224, 224)
+IMG_SIZE = 224
+SEED = 42
 
-# =========================
-# CREATE OUTPUT STRUCTURE
-# =========================
-for split in ["train", "eval", "test"]:
-    for cls in ["real", "fake"]:
-        os.makedirs(os.path.join(OUT_ROOT, split, cls), exist_ok=True)
+SPLITS = ["train", "eval", "test"]
+CLASSES = ["real", "fake"]
 
-# =========================
-# EXTRACT FRAMES FUNCTION
-# =========================
-def extract_frames(video_path, output_folder):
+random.seed(SEED)
+
+
+def get_jpeg_quality(split):
+    if split == "train":
+        return random.randint(60, 90)
+    return 75
+
+
+def center_crop(frame, crop_ratio=0.6):
+    h, w = frame.shape[:2]
+
+    new_h = int(h * crop_ratio)
+    new_w = int(w * crop_ratio)
+
+    x = (w - new_w) // 2
+    y = (h - new_h) // 2
+
+    return frame[y:y + new_h, x:x + new_w]
+
+
+def augment_frame(frame):
+    # brightness change
+    if random.random() < 0.5:
+        frame = cv2.convertScaleAbs(frame, alpha=1.0, beta=random.randint(-15, 15))
+
+    # slight blur
+    if random.random() < 0.3:
+        frame = cv2.GaussianBlur(frame, (3, 3), 0)
+
+    return frame
+
+
+def extract_frames(video_path, output_dir, split):
     cap = cv2.VideoCapture(video_path)
 
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if not cap.isOpened():
+        return False
 
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total_frames <= 0:
-        print(f"Cannot read video: {video_path}")
-        return
+        cap.release()
+        return False
 
     step = max(total_frames // FRAMES_PER_VIDEO, 1)
 
-    frame_id = 0
     saved = 0
+    frame_index = 0
+    target_frame = 0
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
+    while cap.isOpened() and saved < FRAMES_PER_VIDEO:
+        success, frame = cap.read()
+        if not success:
             break
 
-        if frame_id % step == 0:
-            frame = cv2.resize(frame, IMG_SIZE)
+        if frame_index == target_frame:
+            frame = center_crop(frame)
+            frame = cv2.resize(frame, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
 
-            filename = f"frame_{saved+1:02d}.jpg"
-            cv2.imwrite(os.path.join(output_folder, filename), frame)
+            if split == "train":
+                frame = augment_frame(frame)
+
+            output_path = os.path.join(output_dir, f"frame_{saved + 1:02d}.jpg")
+            quality = get_jpeg_quality(split)
+
+            cv2.imwrite(output_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
 
             saved += 1
-            if saved >= FRAMES_PER_VIDEO:
-                break
+            target_frame += step
 
-        frame_id += 1
+        frame_index += 1
 
     cap.release()
+    return saved > 0
 
-# =========================
-# PROCESS ALL VIDEOS
-# =========================
-for split in ["train", "eval", "test"]:
-    for cls in ["real", "fake"]:
 
-        src_folder = os.path.join(RAW_ROOT, split, cls)
-        dst_folder = os.path.join(OUT_ROOT, split, cls)
+def main():
+    processed_count = 0
+    bad_count = 0
 
-        if not os.path.exists(src_folder):
-            print(f"Missing folder: {src_folder}")
-            continue
+    for split in SPLITS:
+        for cls in CLASSES:
+            input_dir = os.path.join(INPUT_ROOT, split, cls)
+            output_dir = os.path.join(OUTPUT_ROOT, split, cls)
 
-        videos = [f for f in os.listdir(src_folder) if f.endswith(".mp4")]
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        print(f"\nProcessing {split}/{cls} - {len(videos)} videos")
+            videos = [
+                file for file in os.listdir(input_dir)
+                if file.lower().endswith(".mp4")
+            ]
 
-        for i, video in enumerate(videos, start=1):
-            video_path = os.path.join(src_folder, video)
+            print(f"\n=== {split.upper()} / {cls.upper()} ===")
+            print(f"Videos: {len(videos)}")
 
-            video_name = os.path.splitext(video)[0]
-            out_path = os.path.join(dst_folder, video_name)
+            for video in tqdm(videos, desc=f"{split}-{cls}", unit="video", ncols=100):
+                video_path = os.path.join(input_dir, video)
+                video_name = os.path.splitext(video)[0]
 
-            os.makedirs(out_path, exist_ok=True)
+                output_video_dir = os.path.join(output_dir, video_name)
+                Path(output_video_dir).mkdir(parents=True, exist_ok=True)
 
-            extract_frames(video_path, out_path)
+                if extract_frames(video_path, output_video_dir, split):
+                    processed_count += 1
+                else:
+                    bad_count += 1
 
-            if i % 50 == 0 or i == len(videos):
-                print(f"   Progress: {i}/{len(videos)}")
+    print("\n===== DONE =====")
+    print(f"Processed videos: {processed_count}")
+    print(f"Bad videos: {bad_count}")
+    print(f"Saved to: {OUTPUT_ROOT}")
 
-print("\nDONE EXTRACTING FRAMES")
+
+if __name__ == "__main__":
+    main()

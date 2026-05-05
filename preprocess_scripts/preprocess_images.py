@@ -1,71 +1,76 @@
+# ============================================================
+# Image Preprocessing Script
+# ============================================================
+
 import os
 from PIL import Image
 
-# =========================
-# PATHS
-# =========================
 SRC_ROOT = r"D:\FakeDetection\raw_datasets\image"
 DST_ROOT = r"D:\FakeDetection\processed_datasets\image"
 
 SPLITS = ["train", "eval", "test"]
 CLASSES = ["real", "fake"]
-VALID_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-IMG_SIZE = (224, 224)
+VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+IMAGE_SIZE = (224, 224)
 
 
-def ensure_folder(path):
-    os.makedirs(path, exist_ok=True)
+def create_folder(path):
+    os.makedirs(path, exist_ok=True)  # create folder if needed
 
 
 def get_image_files(folder):
-    files = []
     if not os.path.exists(folder):
-        return files
+        return []
 
-    for f in os.listdir(folder):
-        full_path = os.path.join(folder, f)
-        ext = os.path.splitext(f)[1].lower()
-        if os.path.isfile(full_path) and ext in VALID_EXTS:
-            files.append(full_path)
+    files = []
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        ext = os.path.splitext(name)[1].lower()
+
+        if os.path.isfile(path) and ext in VALID_EXTENSIONS:
+            files.append(path)  # valid image
 
     return sorted(files)
 
 
-def process_and_save(src_path, dst_path):
-    with Image.open(src_path) as img:
-        img = img.convert("RGB")
-        img = img.resize(IMG_SIZE, Image.LANCZOS)
-        img.save(dst_path, "JPEG", quality=95)
+def process_image(src, dst):
+    with Image.open(src) as img:
+        img = img.convert("RGB")  # ensure RGB
+        img = img.resize(IMAGE_SIZE, Image.LANCZOS)  # resize
+        img.save(dst, "JPEG", quality=95)  # save
 
 
-for split in SPLITS:
-    for class_name in CLASSES:
-        src_folder = os.path.join(SRC_ROOT, split, class_name)
-        dst_folder = os.path.join(DST_ROOT, split, class_name)
+def process_dataset():
+    for split in SPLITS:
+        for cls in CLASSES:
+            src_folder = os.path.join(SRC_ROOT, split, cls)
+            dst_folder = os.path.join(DST_ROOT, split, cls)
 
-        ensure_folder(dst_folder)
+            create_folder(dst_folder)
+            images = get_image_files(src_folder)
 
-        image_files = get_image_files(src_folder)
-        print(f"\nProcessing {split}/{class_name}...")
-        print(f"Found {len(image_files)} images")
+            print(f"\n{split}/{cls}: {len(images)} images")
 
-        count = 1
-        for i, src_path in enumerate(image_files, start=1):
-            try:
-                new_name = f"{class_name}_{count:06d}.jpg"
-                dst_path = os.path.join(dst_folder, new_name)
+            count = 0
+            for i, src_path in enumerate(images, 1):
+                try:
+                    count += 1
+                    filename = f"{cls}_{count:06d}.jpg"  # rename
+                    dst_path = os.path.join(dst_folder, filename)
 
-                process_and_save(src_path, dst_path)
-                count += 1
+                    process_image(src_path, dst_path)
 
-                if i % 500 == 0:
-                    print(f"Processed {i}/{len(image_files)}")
+                    if i % 500 == 0:
+                        print(f"Processed {i}/{len(images)}")  # progress
 
-            except Exception as e:
-                print(f"Skipped {src_path} بسبب error: {e}")
+                except Exception as e:
+                    count -= 1
+                    print(f"Skipped: {e}")  # skip bad file
 
-        print(f"Done {split}/{class_name}")
-        print(f"Saved {count - 1} images to {dst_folder}")
+            print(f"Saved {count} images")
 
-print("\nDone. All images resized and saved.")
+
+if __name__ == "__main__":
+    process_dataset()
+    print("\nDone.")

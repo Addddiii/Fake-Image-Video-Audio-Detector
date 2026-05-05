@@ -1,481 +1,278 @@
-import os
-import copy
-import time
-import random
+# ============================================================
+# Video Training Script
+# ============================================================
 
+from pathlib import Path
+import random
 import torch
 import torch.nn as nn
-import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from PIL import Image
-from torchvision import transforms, models
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from tqdm import tqdm
+
+DATA_DIR = Path(r"D:\Videos_Processed")
+MODEL_DIR = Path(r"D:\video\model")
+
+BEST_PATH = MODEL_DIR / "video_best.pth"
+FINAL_PATH = MODEL_DIR / "video_final.pth"
+
+BATCH_SIZE = 12
+EPOCHS = 25
+LR = 5e-5
+WEIGHT_DECAY = 1e-4
+NUM_WORKERS = 8
+FRAMES_PER_VIDEO = 12
+IMAGE_SIZE = 224
+PATIENCE = 7
+SEED = 42
+
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+random.seed(SEED)
+torch.manual_seed(SEED)
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Device:", DEVICE)
+
+if DEVICE.type == "cuda":
+    print("GPU:", torch.cuda.get_device_name(0))
+    torch.backends.cudnn.benchmark = True
 
 
-def seed_everything(seed=42):
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-class VideoFrameDataset(Dataset):
-    def __init__(
-        self,
-        root_dir,
-        num_frames=20,
-        transform=None,
-        train=False,
-        balance_ratio=None,   # fake:real cap, e.g. 2 means at most 2 fake per 1 real
-        seed=42
-    ):
-        self.root_dir = root_dir
-        self.num_frames = num_frames
-        self.transform = transform
-        self.train = train
-        self.balance_ratio = balance_ratio
-        self.seed = seed
-
-        self.class_to_idx = {"fake": 0, "real": 1}
+class VideoDataset(Dataset):
+    def __init__(self, split):
+        self.split = split
         self.samples = []
 
-        fake_samples = []
-        real_samples = []
+        self.train_tf = transforms.Compose([
+            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+            transforms.RandomHorizontalFlip(0.5),
+            transforms.RandomRotation(5),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.10),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
 
-        for class_name in ["fake", "real"]:
-            class_dir = os.path.join(root_dir, class_name)
-            if not os.path.exists(class_dir):
-                continue
+        self.eval_tf = transforms.Compose([
+            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
 
-            for video_folder in sorted(os.listdir(class_dir)):
-                video_path = os.path.join(class_dir, video_folder)
-                if os.path.isdir(video_path):
-                    frame_paths = sorted([
-                        os.path.join(video_path, f)
-                        for f in os.listdir(video_path)
-                        if f.lower().endswith((".jpg", ".jpeg", ".png"))
-                    ])
+        for label_name, label in [("real", 0), ("fake", 1)]:
+            folder = DATA_DIR / split / label_name
 
-                    if len(frame_paths) > 0:
-                        sample = {
-                            "video_path": video_path,
-                            "frame_paths": frame_paths,
-                            "label": self.class_to_idx[class_name]
-                        }
+            if not folder.exists():
+                raise FileNotFoundError(f"Missing folder: {folder}")
 
-                        if class_name == "fake":
-                            fake_samples.append(sample)
-                        else:
-                            real_samples.append(sample)
+            for video_folder in folder.iterdir():
+                if video_folder.is_dir():
+                    frames = sorted(video_folder.glob("*.jpg"))
 
-        # cap fake count in train set
-        if self.train and self.balance_ratio is not None and len(real_samples) > 0:
-            rng = random.Random(self.seed)
-            max_fake = min(len(fake_samples), len(real_samples) * self.balance_ratio)
-            if len(fake_samples) > max_fake:
-                fake_samples = rng.sample(fake_samples, max_fake)
+                    if len(frames) >= FRAMES_PER_VIDEO:
+                        self.samples.append((frames, label))
 
-        self.samples = fake_samples + real_samples
-
-        if self.train:
-            random.Random(self.seed).shuffle(self.samples)
+        print(f"{split}: {len(self.samples)} videos")
 
     def __len__(self):
         return len(self.samples)
 
-    def _sample_frames(self, frame_paths):
-        n = len(frame_paths)
+    def pick_frames(self, frames):
+        if self.split == "train":
+            return sorted(random.sample(frames, FRAMES_PER_VIDEO))
 
-        if n >= self.num_frames:
-            if self.train:
-                # random temporal sampling for robustness
-                indices = sorted(random.sample(range(n), self.num_frames))
-            else:
-                # deterministic for eval/test
-                indices = torch.linspace(0, n - 1, steps=self.num_frames)
-                indices = indices.round().long().tolist()
-        else:
-            indices = list(range(n)) + [n - 1] * (self.num_frames - n)
+        step = len(frames) / FRAMES_PER_VIDEO
+        indexes = [min(int(i * step), len(frames) - 1) for i in range(FRAMES_PER_VIDEO)]
+        return [frames[i] for i in indexes]
 
-        return [frame_paths[i] for i in indices]
+    def __getitem__(self, index):
+        frames, label = self.samples[index]
+        selected_frames = self.pick_frames(frames)
 
-    def __getitem__(self, idx):
-        sample = self.samples[idx]
-        frame_paths = self._sample_frames(sample["frame_paths"])
-        frames = []
+        transform = self.train_tf if self.split == "train" else self.eval_tf
 
-        for frame_path in frame_paths:
-            img = Image.open(frame_path).convert("RGB")
-            if self.transform:
-                img = self.transform(img)
-            frames.append(img)
+        images = []
+        for frame_path in selected_frames:
+            try:
+                image = Image.open(frame_path).convert("RGB")
+            except Exception:
+                image = Image.open(random.choice(frames)).convert("RGB")
 
-        frames = torch.stack(frames)  # [T, C, H, W]
-        label = sample["label"]
-        return frames, label
+            images.append(transform(image))
+
+        images = torch.stack(images)
+        label = torch.tensor(label, dtype=torch.long)
+
+        return images, label
 
 
-class VideoClassifier(nn.Module):
-    def __init__(self, num_classes=2, dropout=0.3):
-        super().__init__()
+def build_model():
+    model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
 
-        weights = models.EfficientNet_B0_Weights.DEFAULT
-        backbone = models.efficientnet_b0(weights=weights)
-
-        in_features = backbone.classifier[1].in_features
-        backbone.classifier = nn.Identity()
-
-        self.backbone = backbone
-        self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(in_features, num_classes)
-
-    def forward(self, x):
-        # x: [B, T, C, H, W]
-        b, t, c, h, w = x.shape
-        x = x.view(b * t, c, h, w)
-
-        features = self.backbone(x)          # [B*T, F]
-        features = self.dropout(features)
-        logits = self.classifier(features)   # [B*T, 2]
-
-        logits = logits.view(b, t, -1)       # [B, T, 2]
-        logits = logits.mean(dim=1)          # temporal average
-        return logits
-
-
-def main():
-    seed_everything(42)
-
-    # =========================
-    # PATHS
-    # =========================
-    DATA_DIR = r"D:\video\processed"
-    MODEL_DIR = r"D:\video\model"
-    MODEL_PATH = os.path.join(MODEL_DIR, "deepfake_video_model_best.pth")
-
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    # =========================
-    # SETTINGS
-    # =========================
-    IMG_SIZE = 224
-    NUM_FRAMES = 20
-    BATCH_SIZE = 8
-    NUM_EPOCHS = 25
-    LEARNING_RATE = 1e-4
-    WEIGHT_DECAY = 1e-4
-    NUM_WORKERS = 2
-    EARLY_STOPPING_PATIENCE = 6
-    LABEL_SMOOTHING = 0.03
-
-    # stronger balance than before
-    TRAIN_FAKE_TO_REAL_RATIO = 2
-
-    # class weights: fake=0, real=1
-    # higher weight on real because it is minority and harder
-    CLASS_WEIGHTS = [1.0, 2.0]
-
-    # =========================
-    # DEVICE
-    # =========================
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {DEVICE}")
-
-    if DEVICE.type == "cuda":
-        print("GPU:", torch.cuda.get_device_name(0))
-        torch.backends.cudnn.benchmark = True
-    else:
-        print("Running on CPU (slower)")
-
-    # =========================
-    # TRANSFORMS
-    # =========================
-    train_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomRotation(5),
-        transforms.ColorJitter(brightness=0.18, contrast=0.18, saturation=0.18, hue=0.03),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
-    ])
-
-    eval_test_transform = transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
-    ])
-
-    # =========================
-    # DATASETS
-    # =========================
-    train_dataset = VideoFrameDataset(
-        os.path.join(DATA_DIR, "train"),
-        num_frames=NUM_FRAMES,
-        transform=train_transform,
-        train=True,
-        balance_ratio=TRAIN_FAKE_TO_REAL_RATIO,
-        seed=42
+    in_features = model.classifier[1].in_features
+    model.classifier[1] = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(in_features, 2)
     )
 
-    eval_dataset = VideoFrameDataset(
-        os.path.join(DATA_DIR, "eval"),
-        num_frames=NUM_FRAMES,
-        transform=eval_test_transform,
-        train=False,
-        balance_ratio=None
-    )
+    return model
 
-    test_dataset = VideoFrameDataset(
-        os.path.join(DATA_DIR, "test"),
-        num_frames=NUM_FRAMES,
-        transform=eval_test_transform,
-        train=False,
-        balance_ratio=None
-    )
 
-    print("\n========== DATASET INFO ==========")
-    print("Train videos:", len(train_dataset))
-    print("Eval videos :", len(eval_dataset))
-    print("Test videos :", len(test_dataset))
+def run_epoch(model, loader, loss_fn, device, optimizer=None, scaler=None, name="Train"):
+    training = optimizer is not None
+    model.train() if training else model.eval()
 
-    def count_labels(dataset):
-        counts = {0: 0, 1: 0}
-        for s in dataset.samples:
-            counts[s["label"]] += 1
-        return counts
+    loss_sum = 0.0
+    correct = 0
+    total = 0
 
-    train_counts = count_labels(train_dataset)
-    eval_counts = count_labels(eval_dataset)
-    test_counts = count_labels(test_dataset)
+    real_correct, real_total = 0, 0
+    fake_correct, fake_total = 0, 0
 
-    print("Train counts:", {"fake": train_counts[0], "real": train_counts[1]})
-    print("Eval counts :", {"fake": eval_counts[0], "real": eval_counts[1]})
-    print("Test counts :", {"fake": test_counts[0], "real": test_counts[1]})
+    loop = tqdm(loader, desc=name, dynamic_ncols=True, mininterval=1.0)
 
-    # =========================
-    # SAMPLER FOR TRAINING
-    # =========================
-    train_labels = [s["label"] for s in train_dataset.samples]
-    class_sample_count = torch.tensor([
-        sum(1 for x in train_labels if x == 0),
-        sum(1 for x in train_labels if x == 1)
-    ], dtype=torch.float)
+    for videos, labels in loop:
+        videos = videos.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
-    class_sample_weights = 1.0 / class_sample_count
-    sample_weights = [class_sample_weights[label].item() for label in train_labels]
+        batch_size, frames, c, h, w = videos.shape
+        videos = videos.view(batch_size * frames, c, h, w)
 
-    train_sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(sample_weights),
-        replacement=True
-    )
-
-    # =========================
-    # DATALOADERS
-    # =========================
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        sampler=train_sampler,
-        num_workers=NUM_WORKERS,
-        pin_memory=(DEVICE.type == "cuda"),
-        persistent_workers=(NUM_WORKERS > 0)
-    )
-
-    eval_loader = DataLoader(
-        eval_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=(DEVICE.type == "cuda"),
-        persistent_workers=(NUM_WORKERS > 0)
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=(DEVICE.type == "cuda"),
-        persistent_workers=(NUM_WORKERS > 0)
-    )
-
-    # =========================
-    # MODEL
-    # =========================
-    model = VideoClassifier(num_classes=2, dropout=0.3).to(DEVICE)
-
-    # =========================
-    # LOSS / OPTIMIZER / SCHEDULER
-    # =========================
-    class_weights_tensor = torch.tensor(CLASS_WEIGHTS, dtype=torch.float32, device=DEVICE)
-
-    criterion = nn.CrossEntropyLoss(
-        weight=class_weights_tensor,
-        label_smoothing=LABEL_SMOOTHING
-    )
-
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY
-    )
-
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="max",
-        factor=0.5,
-        patience=1
-    )
-
-    scaler = torch.amp.GradScaler("cuda", enabled=(DEVICE.type == "cuda"))
-
-    # =========================
-    # METRICS
-    # =========================
-    def compute_metrics(all_preds, all_labels):
-        all_preds = torch.tensor(all_preds)
-        all_labels = torch.tensor(all_labels)
-
-        total_acc = (all_preds == all_labels).float().mean().item()
-
-        fake_mask = (all_labels == 0)
-        real_mask = (all_labels == 1)
-
-        fake_acc = (
-            (all_preds[fake_mask] == all_labels[fake_mask]).float().mean().item()
-            if fake_mask.sum() > 0 else 0.0
-        )
-        real_acc = (
-            (all_preds[real_mask] == all_labels[real_mask]).float().mean().item()
-            if real_mask.sum() > 0 else 0.0
-        )
-
-        balanced_acc = (fake_acc + real_acc) / 2.0
-        return total_acc, fake_acc, real_acc, balanced_acc
-
-    # =========================
-    # EPOCH LOOP
-    # =========================
-    def run_epoch(loader, training=False):
-        if training:
-            model.train()
-        else:
-            model.eval()
-
-        total_loss = 0.0
-        total_samples = 0
-        all_preds = []
-        all_labels = []
-
-        for videos, labels in loader:
-            videos = videos.to(DEVICE, non_blocking=True)
-            labels = labels.to(DEVICE, non_blocking=True)
+        with torch.set_grad_enabled(training):
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = model(videos)
+                outputs = outputs.view(batch_size, frames, 2).mean(dim=1)
+                loss = loss_fn(outputs, labels)
 
             if training:
                 optimizer.zero_grad(set_to_none=True)
-
-            with torch.amp.autocast("cuda", enabled=(DEVICE.type == "cuda")):
-                outputs = model(videos)
-                loss = criterion(outputs, labels)
-
-            if training:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
 
-            preds = outputs.argmax(dim=1)
+        preds = outputs.argmax(dim=1)
 
-            batch_size_now = labels.size(0)
-            total_loss += loss.item() * batch_size_now
-            total_samples += batch_size_now
+        loss_sum += loss.item() * batch_size
+        correct += (preds == labels).sum().item()
+        total += batch_size
 
-            all_preds.extend(preds.detach().cpu().tolist())
-            all_labels.extend(labels.detach().cpu().tolist())
+        for pred, label in zip(preds, labels):
+            if label.item() == 0:
+                real_total += 1
+                real_correct += int(pred.item() == label.item())
+            else:
+                fake_total += 1
+                fake_correct += int(pred.item() == label.item())
 
-        avg_loss = total_loss / total_samples
-        total_acc, fake_acc, real_acc, balanced_acc = compute_metrics(all_preds, all_labels)
-        return avg_loss, total_acc, fake_acc, real_acc, balanced_acc
+        acc = correct / total
+        real_acc = real_correct / max(1, real_total)
+        fake_acc = fake_correct / max(1, fake_total)
+        bal_acc = (real_acc + fake_acc) / 2
 
-    # =========================
-    # TRAINING LOOP
-    # =========================
-    best_eval_bal_acc = 0.0
-    best_model_weights = copy.deepcopy(model.state_dict())
-    epochs_without_improvement = 0
-    start_time = time.time()
+        loop.set_postfix(
+            loss=f"{loss_sum / total:.4f}",
+            acc=f"{acc:.4f}",
+            bal=f"{bal_acc:.4f}"
+        )
 
-    for epoch in range(NUM_EPOCHS):
-        epoch_start = time.time()
-        current_lr = optimizer.param_groups[0]["lr"]
+    loss = loss_sum / total
+    acc = correct / total
+    real_acc = real_correct / max(1, real_total)
+    fake_acc = fake_correct / max(1, fake_total)
+    bal_acc = (real_acc + fake_acc) / 2
 
-        print(f"\n========== Epoch {epoch + 1}/{NUM_EPOCHS} ==========")
-        print(f"Learning Rate: {current_lr:.8f}")
+    return loss, acc, bal_acc, real_acc, fake_acc
 
-        train_loss, train_acc, train_fake_acc, train_real_acc, train_bal_acc = run_epoch(train_loader, training=True)
-        eval_loss, eval_acc, eval_fake_acc, eval_real_acc, eval_bal_acc = run_epoch(eval_loader, training=False)
 
-        scheduler.step(eval_bal_acc)
+def main():
+    train_ds = VideoDataset("train")
+    eval_ds = VideoDataset("eval")
+    test_ds = VideoDataset("test")
 
-        print(f"Train Loss: {train_loss:.4f} | Acc: {train_acc:.4f} | Bal Acc: {train_bal_acc:.4f}")
-        print(f"Train Fake Acc: {train_fake_acc:.4f} | Train Real Acc: {train_real_acc:.4f}")
+    loader_settings = {
+        "batch_size": BATCH_SIZE,
+        "num_workers": NUM_WORKERS,
+        "pin_memory": DEVICE.type == "cuda",
+        "persistent_workers": NUM_WORKERS > 0,
+    }
 
-        print(f"Eval  Loss: {eval_loss:.4f} | Acc: {eval_acc:.4f} | Bal Acc: {eval_bal_acc:.4f}")
-        print(f"Eval  Fake Acc: {eval_fake_acc:.4f} | Eval  Real Acc: {eval_real_acc:.4f}")
+    train_loader = DataLoader(train_ds, shuffle=True, **loader_settings)
+    eval_loader = DataLoader(eval_ds, shuffle=False, **loader_settings)
+    test_loader = DataLoader(test_ds, shuffle=False, **loader_settings)
 
-        epoch_time = time.time() - epoch_start
-        elapsed_time = time.time() - start_time
-        avg_epoch_time = elapsed_time / (epoch + 1)
-        remaining_time = avg_epoch_time * (NUM_EPOCHS - epoch - 1)
+    model = build_model().to(DEVICE)
 
-        print(f"Epoch Time: {epoch_time / 60:.2f} min")
-        print(f"Estimated Remaining: {remaining_time / 60:.2f} min")
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=0.05)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", patience=3, factor=0.5
+    )
+    scaler = torch.amp.GradScaler("cuda", enabled=(DEVICE.type == "cuda"))
 
-        if eval_bal_acc > best_eval_bal_acc:
-            best_eval_bal_acc = eval_bal_acc
-            best_model_weights = copy.deepcopy(model.state_dict())
+    best_bal_acc = 0.0
+    wait = 0
 
-            save_obj = {
-                "model_state_dict": best_model_weights,
-                "num_frames": NUM_FRAMES,
-                "img_size": IMG_SIZE,
-                "class_to_idx": {"fake": 0, "real": 1},
-                "best_eval_bal_acc": best_eval_bal_acc
-            }
-            torch.save(save_obj, MODEL_PATH)
+    for epoch in range(1, EPOCHS + 1):
+        print(f"\n===== EPOCH {epoch}/{EPOCHS} =====")
 
-            print(f"Saved best model to: {MODEL_PATH}")
-            epochs_without_improvement = 0
+        train_loss, train_acc, train_bal, train_real, train_fake = run_epoch(
+            model, train_loader, loss_fn, DEVICE, optimizer, scaler, "Train"
+        )
+
+        eval_loss, eval_acc, eval_bal, eval_real, eval_fake = run_epoch(
+            model, eval_loader, loss_fn, DEVICE, name="Eval"
+        )
+
+        scheduler.step(eval_bal)
+
+        print(f"\nTrain Loss: {train_loss:.4f} | Acc: {train_acc:.4f} | Bal: {train_bal:.4f}")
+        print(f"Eval  Loss: {eval_loss:.4f} | Acc: {eval_acc:.4f} | Bal: {eval_bal:.4f}")
+        print(f"Eval Real Acc: {eval_real:.4f} | Eval Fake Acc: {eval_fake:.4f}")
+        print(f"LR: {optimizer.param_groups[0]['lr']:.8f}")
+
+        if eval_bal > best_bal_acc:
+            best_bal_acc = eval_bal
+            wait = 0
+
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "epoch": epoch,
+                "best_balanced_acc": best_bal_acc,
+                "model": "efficientnet_b0",
+                "frames_per_video": FRAMES_PER_VIDEO,
+                "image_size": IMAGE_SIZE,
+                "classes": ["real", "fake"],
+            }, BEST_PATH)
+
+            print(f"Saved best model: {BEST_PATH}")
         else:
-            epochs_without_improvement += 1
-            print(f"No improvement for {epochs_without_improvement} epoch(s)")
+            wait += 1
+            print(f"No improvement ({wait}/{PATIENCE})")
 
-        if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
-            print("Early stopping triggered.")
+        if wait >= PATIENCE:
+            print("Early stopping")
             break
 
-    # =========================
-    # FINAL TEST
-    # =========================
-    model.load_state_dict(best_model_weights)
+    print("\n===== TEST =====")
 
-    test_loss, test_acc, test_fake_acc, test_real_acc, test_bal_acc = run_epoch(test_loader, training=False)
+    checkpoint = torch.load(BEST_PATH, map_location=DEVICE)
+    model.load_state_dict(checkpoint["model_state_dict"])
 
-    total_time = time.time() - start_time
+    test_loss, test_acc, test_bal, test_real, test_fake = run_epoch(
+        model, test_loader, loss_fn, DEVICE, name="Test"
+    )
 
-    print("\n========== FINAL RESULTS ==========")
-    print(f"Best Eval Balanced Accuracy: {best_eval_bal_acc:.4f}")
+    print("\nFINAL RESULTS")
     print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test Accuracy: {test_acc:.4f}")
-    print(f"Test Fake Accuracy: {test_fake_acc:.4f}")
-    print(f"Test Real Accuracy: {test_real_acc:.4f}")
-    print(f"Test Balanced Accuracy: {test_bal_acc:.4f}")
-    print(f"Total Training Time: {total_time / 60:.2f} min")
-    print("Training complete.")
+    print(f"Test Acc: {test_acc:.4f}")
+    print(f"Test Balanced Acc: {test_bal:.4f}")
+    print(f"Test Real Acc: {test_real:.4f}")
+    print(f"Test Fake Acc: {test_fake:.4f}")
+
+    torch.save(model.state_dict(), FINAL_PATH)
+    print(f"Final model saved to: {FINAL_PATH}")
 
 
 if __name__ == "__main__":

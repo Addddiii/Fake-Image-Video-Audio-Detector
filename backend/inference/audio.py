@@ -1,48 +1,47 @@
 """
 Audio Deepfake Detection Inference
-Handles audio file loading, preprocessing, and model inference
-Matches preprocessing from preprocess_audio.py and train_audio.py
+
+This module loads a trained audio classification model and predicts
+whether an uploaded audio file is real or fake.
 """
 
 import logging
-import tempfile
-from pathlib import Path
 from typing import Dict
 
 import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
-from audio_model_architecture import AudioClassifier
+from architectures.audio_model import AudioClassifier
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Preprocessing constants matching train_audio.py
+# Audio preprocessing settings
 TARGET_SR = 16000
 N_MELS = 128
 N_FFT = 1024
 HOP_LENGTH = 256
-DURATION = 4.0  # seconds
+DURATION = 4.0
 FIXED_SAMPLES = int(TARGET_SR * DURATION)
 
 
 class AudioDeepfakeDetector:
     """
-    Audio deepfake detection using trained EfficientNet-B0 model
+    Handles audio loading, spectrogram generation, and model prediction.
     """
     
     def __init__(self, model_path: str, device: str = None):
         """
-        Initialize the audio detector
-        
+        Initialize the detector and load model weights.
+
         Args:
-            model_path: Path to the trained model (.pth file)
-            device: Device to run inference on ('cuda' or 'cpu')
+            model_path: Path to trained model file
+            device: 'cuda' or 'cpu'. Automatically selected if None
         """
         self.model_path = model_path
         
-        # Set device
+        # Select computation device
         if device is None:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
@@ -50,32 +49,27 @@ class AudioDeepfakeDetector:
         
         logger.info(f"Loading model on {self.device}")
         
-        # Load model
         self.model = self._load_model()
         self.model.eval()
         
-        logger.info("Model loaded successfully")
+        logger.info("Model ready")
     
     def _load_model(self) -> AudioClassifier:
         """
-        Load the trained model from checkpoint
-        
+        Load model weights into the audio classifier.
+
         Returns:
-            Loaded AudioClassifier model
+            AudioClassifier model ready for inference
         """
         try:
-            # Create model instance
             model = AudioClassifier(num_classes=2)
             
-            # Load checkpoint
             checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
             
-            # Load state dict
+            # Support both checkpoint dictionaries and direct state_dict files
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-                # Handle checkpoint format with metadata
                 model.load_state_dict(checkpoint['model_state_dict'])
             else:
-                # Handle direct state dict format
                 model.load_state_dict(checkpoint)
             
             model.to(self.device)
@@ -87,20 +81,18 @@ class AudioDeepfakeDetector:
     
     def load_and_fix_length(self, audio_path: str) -> np.ndarray:
         """
-        Load audio file and fix length to FIXED_SAMPLES
-        Matches preprocessing from preprocess_audio.py
-        
+        Load audio and force it to a fixed duration.
+
         Args:
             audio_path: Path to audio file
-            
+
         Returns:
-            Audio array of fixed length
+            Audio waveform with fixed number of samples
         """
         try:
-            # Load audio using librosa
             audio, _ = librosa.load(audio_path, sr=TARGET_SR, mono=True)
             
-            # Pad or truncate to fixed length
+            # Pad short audio or trim long audio
             if len(audio) < FIXED_SAMPLES:
                 pad = FIXED_SAMPLES - len(audio)
                 audio = np.pad(audio, (0, pad), mode='constant')
@@ -115,17 +107,15 @@ class AudioDeepfakeDetector:
     
     def make_log_mel(self, audio: np.ndarray) -> np.ndarray:
         """
-        Convert audio to log-mel spectrogram
-        Matches preprocessing from preprocess_audio.py
-        
+        Convert waveform audio into a log-mel spectrogram.
+
         Args:
-            audio: Audio array
-            
+            audio: Audio waveform array
+
         Returns:
-            Log-mel spectrogram (H, W) array
+            Log-mel spectrogram as a float32 array
         """
         try:
-            # Create mel spectrogram
             mel = librosa.feature.melspectrogram(
                 y=audio,
                 sr=TARGET_SR,
@@ -135,9 +125,7 @@ class AudioDeepfakeDetector:
                 power=2.0,
             )
             
-            # Convert to log scale
             log_mel = librosa.power_to_db(mel, ref=np.max)
-            
             return log_mel.astype(np.float32)
             
         except Exception as e:
@@ -146,31 +134,27 @@ class AudioDeepfakeDetector:
     
     def preprocess_audio(self, audio_path: str) -> torch.Tensor:
         """
-        Preprocess audio file for model input
-        Matches preprocessing from train_audio.py NpyDataset
-        
+        Convert an audio file into the tensor format expected by the model.
+
         Args:
             audio_path: Path to audio file
-            
+
         Returns:
-            Preprocessed tensor of shape (1, 3, 224, 224)
+            Tensor with shape (1, 3, 224, 224)
         """
         try:
-            # Load and fix length
             audio = self.load_and_fix_length(audio_path)
-            
-            # Create log-mel spectrogram
             log_mel = self.make_log_mel(audio)
             
-            # Normalize (per-sample normalization)
+            # Normalize each spectrogram independently
             mean = np.mean(log_mel)
             std = np.std(log_mel)
             log_mel = (log_mel - mean) / (std + 1e-6)
             
-            # Convert to tensor and add batch/channel dimensions
-            x = torch.from_numpy(log_mel).unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+            # Add batch and channel dimensions: (1, 1, H, W)
+            x = torch.from_numpy(log_mel).unsqueeze(0).unsqueeze(0)
             
-            # Interpolate to 224x224
+            # Resize spectrogram to image-model input size
             x = F.interpolate(
                 x,
                 size=(224, 224),
@@ -178,12 +162,12 @@ class AudioDeepfakeDetector:
                 align_corners=False
             )
             
-            # Remove batch dimension and repeat to 3 channels
-            x = x.squeeze(0)  # (1, 224, 224)
-            x = x.repeat(3, 1, 1)  # (3, 224, 224)
+            # Convert from 1 channel to 3 channels
+            x = x.squeeze(0)
+            x = x.repeat(3, 1, 1)
             
-            # Add batch dimension back
-            x = x.unsqueeze(0)  # (1, 3, 224, 224)
+            # Add batch dimension: (1, 3, 224, 224)
+            x = x.unsqueeze(0)
             
             return x
             
@@ -193,39 +177,26 @@ class AudioDeepfakeDetector:
     
     def predict(self, audio_path: str) -> Dict:
         """
-        Predict if audio is real or fake
-        
+        Perform fake vs real prediction on an audio file.
+
         Args:
             audio_path: Path to audio file
-            
+
         Returns:
-            Dictionary with prediction results:
-            {
-                'prediction': 'fake' or 'real',
-                'confidence': float (0-100),
-                'probabilities': {
-                    'fake': float (0-100),
-                    'real': float (0-100)
-                },
-                'duration_seconds': float
-            }
+            Dictionary containing prediction, confidence, probabilities, and analyzed duration
         """
         try:
-            # Preprocess audio
             audio_tensor = self.preprocess_audio(audio_path)
             audio_tensor = audio_tensor.to(self.device)
             
-            # Run inference
             with torch.no_grad():
                 logits = self.model(audio_tensor)
                 probabilities = F.softmax(logits, dim=1)
             
-            # Get probabilities for each class
-            # Class 0 = real, Class 1 = fake (from train_audio.py)
+            # Class order used by the audio model
             real_prob = probabilities[0, 0].item() * 100
             fake_prob = probabilities[0, 1].item() * 100
             
-            # Determine prediction
             predicted_class = torch.argmax(probabilities, dim=1).item()
             prediction = "real" if predicted_class == 0 else "fake"
             confidence = max(real_prob, fake_prob)
@@ -240,7 +211,7 @@ class AudioDeepfakeDetector:
                 "duration_seconds": DURATION
             }
             
-            logger.info(f"Prediction: {prediction} (confidence: {confidence:.2f}%)")
+            logger.info(f"Prediction: {prediction} ({confidence:.2f}%)")
             return result
             
         except Exception as e:
@@ -248,36 +219,15 @@ class AudioDeepfakeDetector:
             raise ValueError(f"Prediction failed: {e}")
 
 
-def load_audio_detector(model_path: str, device: str = None) -> AudioDeepfakeDetector:
+def load_audio_detector(model_path: str = "models/audio_model.pth", device: str = None) -> AudioDeepfakeDetector:
     """
-    Helper function to load audio detector
-    
+    Create and return an audio detector instance.
+
     Args:
-        model_path: Path to model checkpoint
-        device: Device to run on
-        
+        model_path: Path to trained model file
+        device: Device for inference
+
     Returns:
         AudioDeepfakeDetector instance
     """
     return AudioDeepfakeDetector(model_path=model_path, device=device)
-
-
-if __name__ == "__main__":
-    # Test audio detector
-    import sys
-    
-    if len(sys.argv) < 3:
-        print("Usage: python audio_inference.py <model_path> <audio_path>")
-        sys.exit(1)
-    
-    model_path = sys.argv[1]
-    audio_path = sys.argv[2]
-    
-    detector = load_audio_detector(model_path)
-    result = detector.predict(audio_path)
-    
-    print("\nPrediction Results:")
-    print(f"Prediction: {result['prediction']}")
-    print(f"Confidence: {result['confidence']:.2f}%")
-    print(f"Probabilities: Fake={result['probabilities']['fake']:.2f}%, Real={result['probabilities']['real']:.2f}%")
-    print(f"Duration: {result['duration_seconds']}s")

@@ -34,6 +34,13 @@ export default function Home() {
 
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
+  const isValidFile = (file: File, type: MediaType) => {
+  if (type === 'image') return file.type.startsWith('image/')
+  if (type === 'video') return file.type.startsWith('video/')
+  if (type === 'audio') return file.type.startsWith('audio/')
+  return false
+}
+
   const acceptMap: Record<MediaType, string> = {
     image: 'image/jpeg,image/png,image/webp',
     video: 'video/mp4,video/avi,video/quicktime',
@@ -142,6 +149,12 @@ export default function Home() {
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
     if (dropped) {
+      if (!isValidFile(dropped, activeTab)) {
+        const article = activeTab === 'image' || activeTab === 'audio' ? 'an' : 'a'
+        setError(`Invalid file type. Please upload ${article} ${activeTab} file.`)
+        return
+      }
+
       setFile(dropped)
       setPredictionResult(null)
       setError(null)
@@ -157,6 +170,11 @@ export default function Home() {
 
     const selected = e.target.files?.[0]
     if (selected) {
+      if (!isValidFile(selected, activeTab)) {
+        setError(`Invalid file type. Please upload a ${activeTab} file.`)
+        return
+      }
+
       setFile(selected)
       setPredictionResult(null)
       setError(null)

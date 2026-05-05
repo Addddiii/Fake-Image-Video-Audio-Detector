@@ -1,3 +1,7 @@
+# ============================================================
+# Audio Training Script
+# ============================================================
+
 import copy
 from pathlib import Path
 
@@ -6,76 +10,95 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from tqdm import tqdm
 
-DATA_ROOT = r"D:\audio\processed"
-MODEL_DIR = r"D:\audio\model"
+DATA_ROOT = Path(r"D:\audio\processed")
+MODEL_DIR = Path(r"D:\audio\model")
 
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 EPOCHS = 20
 LR = 3e-4
 NUM_WORKERS = 4
 
+BEST_MODEL_PATH = MODEL_DIR / "best_audio_model.pth"
+FINAL_MODEL_PATH = MODEL_DIR / "final_audio_model.pth"
 
-class NpyDataset(Dataset):
+
+class AudioDataset(Dataset):
     def __init__(self, folder):
-        self.files = []
-        self.labels = []
+        self.samples = []
 
-        for label, idx in [("real", 0), ("fake", 1)]:
-            label_dir = Path(folder) / label
-            for f in label_dir.glob("*.npy"):
-                self.files.append(f)
-                self.labels.append(idx)
+        for label_name, label in [("real", 0), ("fake", 1)]:
+            label_dir = Path(folder) / label_name
+
+            if not label_dir.exists():
+                continue
+
+            for file_path in label_dir.glob("*.npy"):
+                self.samples.append((file_path, label))
+
+        np.random.shuffle(self.samples)
+        print(f"{folder}: {len(self.samples)} samples")
 
     def __len__(self):
-        return len(self.files)
+        return len(self.samples)
 
-    def __getitem__(self, i):
-        x = np.load(self.files[i]).astype(np.float32)
+    def __getitem__(self, index):
+        file_path, label = self.samples[index]
 
+        x = np.load(file_path).astype(np.float32)
+
+        # normalize spectrogram
         x = (x - np.mean(x)) / (np.std(x) + 1e-6)
 
-        x = torch.from_numpy(x).unsqueeze(0).unsqueeze(0)  # (1,1,H,W)
+        x = torch.from_numpy(x).unsqueeze(0).unsqueeze(0)
+
+        # resize for EfficientNet
         x = torch.nn.functional.interpolate(
             x,
             size=(224, 224),
             mode="bilinear",
             align_corners=False
         )
-        x = x.squeeze(0)           # (1,224,224)
-        x = x.repeat(3, 1, 1)      # (3,224,224)
 
-        y = torch.tensor(self.labels[i], dtype=torch.long)
+        x = x.squeeze(0)
+        x = x.repeat(3, 1, 1)
+
+        y = torch.tensor(label, dtype=torch.long)
         return x, y
 
 
 def build_model():
     model = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+    in_features = model.classifier[1].in_features
+    model.classifier[1] = nn.Linear(in_features, 2)
     return model
 
 
-def run_epoch(model, loader, loss_fn, device, optimizer=None, scaler=None):
-    train = optimizer is not None
-    model.train() if train else model.eval()
+def run_epoch(model, loader, loss_fn, device, optimizer=None, scaler=None, name="Train"):
+    training = optimizer is not None
+    model.train() if training else model.eval()
 
-    total_loss = 0.0
+    loss_sum = 0.0
     correct = 0
+    total = 0
 
-    for x, y in tqdm(loader, leave=False):
+    loop = tqdm(loader, desc=name, dynamic_ncols=True, mininterval=1.0)
+
+    for x, y in loop:
         x = x.to(device, non_blocking=True)
         y = y.to(device, non_blocking=True)
 
-        with torch.set_grad_enabled(train):
-            with torch.cuda.amp.autocast(enabled=(device.type == "cuda")):
-                out = model(x)
-                loss = loss_fn(out, y)
+        with torch.set_grad_enabled(training):
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = model(x)
+                loss = loss_fn(outputs, y)
 
-            if train:
+            if training:
                 optimizer.zero_grad(set_to_none=True)
+
                 if scaler is not None and device.type == "cuda":
                     scaler.scale(loss).backward()
                     scaler.step(optimizer)
@@ -84,75 +107,102 @@ def run_epoch(model, loader, loss_fn, device, optimizer=None, scaler=None):
                     loss.backward()
                     optimizer.step()
 
-        total_loss += loss.item() * x.size(0)
-        correct += (out.argmax(1) == y).sum().item()
+        preds = outputs.argmax(dim=1)
 
-    loss = total_loss / len(loader.dataset)
-    acc = correct / len(loader.dataset)
-    return loss, acc
+        batch_size = x.size(0)
+        loss_sum += loss.item() * batch_size
+        correct += (preds == y).sum().item()
+        total += batch_size
+
+        loop.set_postfix(
+            loss=f"{loss_sum / total:.4f}",
+            acc=f"{correct / total:.4f}"
+        )
+
+    return loss_sum / total, correct / total
 
 
 def main():
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
+    print("Device:", device)
+
     if device.type == "cuda":
         print("GPU:", torch.cuda.get_device_name(0))
+        torch.backends.cudnn.benchmark = True
 
-    train_ds = NpyDataset(Path(DATA_ROOT) / "train")
-    val_ds   = NpyDataset(Path(DATA_ROOT) / "eval")
-    test_ds  = NpyDataset(Path(DATA_ROOT) / "test")
+    train_ds = AudioDataset(DATA_ROOT / "train")
+    eval_ds = AudioDataset(DATA_ROOT / "eval")
+    test_ds = AudioDataset(DATA_ROOT / "test")
 
-    loader_kwargs = {
+    loader_settings = {
         "batch_size": BATCH_SIZE,
         "num_workers": NUM_WORKERS,
         "pin_memory": device.type == "cuda",
         "persistent_workers": NUM_WORKERS > 0,
     }
 
-    train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)
-    val_loader   = DataLoader(val_ds, shuffle=False, **loader_kwargs)
-    test_loader  = DataLoader(test_ds, shuffle=False, **loader_kwargs)
+    train_loader = DataLoader(train_ds, shuffle=True, **loader_settings)
+    eval_loader = DataLoader(eval_ds, shuffle=False, **loader_settings)
+    test_loader = DataLoader(test_ds, shuffle=False, **loader_settings)
 
     model = build_model().to(device)
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=LR)
+    optimizer = AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=EPOCHS)
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     best_acc = 0.0
     best_model = None
 
-    Path(MODEL_DIR).mkdir(parents=True, exist_ok=True)
+    for epoch in range(1, EPOCHS + 1):
+        print(f"\n===== EPOCH {epoch}/{EPOCHS} =====")
 
-    print("Starting training...\n")
+        train_loss, train_acc = run_epoch(
+            model, train_loader, loss_fn, device, optimizer, scaler, "Train"
+        )
 
-    for epoch in range(EPOCHS):
-        print(f"Epoch {epoch + 1}/{EPOCHS}")
-
-        train_loss, train_acc = run_epoch(model, train_loader, loss_fn, device, optimizer, scaler)
-        val_loss, val_acc = run_epoch(model, val_loader, loss_fn, device)
+        eval_loss, eval_acc = run_epoch(
+            model, eval_loader, loss_fn, device, name="Eval"
+        )
 
         scheduler.step()
 
-        print(f"Train Loss: {train_loss:.4f} | Acc: {train_acc:.4f}")
-        print(f"Val   Loss: {val_loss:.4f} | Acc: {val_acc:.4f}")
+        print(f"\nTrain Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
+        print(f"Eval  Loss: {eval_loss:.4f} | Eval  Acc: {eval_acc:.4f}")
+        print(f"LR: {optimizer.param_groups[0]['lr']:.8f}")
 
-        if val_acc > best_acc:
-            best_acc = val_acc
+        if eval_acc > best_acc:
+            best_acc = eval_acc
             best_model = copy.deepcopy(model.state_dict())
-            torch.save(best_model, Path(MODEL_DIR) / "best_audio_model.pth")
-            print("Saved best model")
 
-        print("-" * 40)
+            torch.save({
+                "model_state_dict": best_model,
+                "epoch": epoch,
+                "best_eval_acc": best_acc,
+                "model": "efficientnet_b0",
+                "classes": ["real", "fake"],
+            }, BEST_MODEL_PATH)
 
-    model.load_state_dict(best_model)
+            print(f"Saved best model: {BEST_MODEL_PATH}")
 
-    test_loss, test_acc = run_epoch(model, test_loader, loss_fn, device)
+    if best_model is not None:
+        model.load_state_dict(best_model)
 
-    print("\nFINAL TEST RESULT")
-    print(f"Loss: {test_loss:.4f}")
-    print(f"Accuracy: {test_acc:.4f}")
+    print("\n===== TESTING BEST MODEL =====")
+
+    test_loss, test_acc = run_epoch(
+        model, test_loader, loss_fn, device, name="Test"
+    )
+
+    print("\nFINAL TEST RESULTS")
+    print(f"Test Loss: {test_loss:.4f}")
+    print(f"Test Acc: {test_acc:.4f}")
+
+    torch.save(model.state_dict(), FINAL_MODEL_PATH)
+    print(f"Final model saved to: {FINAL_MODEL_PATH}")
 
 
 if __name__ == "__main__":
