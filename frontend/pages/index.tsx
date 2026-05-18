@@ -44,7 +44,7 @@ export default function Home() {
   const acceptMap: Record<MediaType, string> = {
     image: 'image/jpeg,image/png,image/webp',
     video: 'video/mp4,video/avi,video/quicktime',
-    audio: 'audio/wav,audio/mpeg,audio/flac'
+    audio: 'audio/wav,audio/mpeg,audio/flac,audio/mp4,audio/x-m4a,audio/aac,audio/ogg,audio/opus'
   }
 
   const ImageIcon = () => (
