@@ -35,11 +35,11 @@ export default function Home() {
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
   const isValidFile = (file: File, type: MediaType) => {
-  if (type === 'image') return file.type.startsWith('image/')
-  if (type === 'video') return file.type.startsWith('video/')
-  if (type === 'audio') return file.type.startsWith('audio/')
-  return false
-}
+    if (type === 'image') return file.type.startsWith('image/')
+    if (type === 'video') return file.type.startsWith('video/')
+    if (type === 'audio') return file.type.startsWith('audio/')
+    return false
+  }
 
   const acceptMap: Record<MediaType, string> = {
     image: 'image/jpeg,image/png,image/webp',
@@ -332,14 +332,12 @@ export default function Home() {
       <Navbar />
 
       <div
-        className={`transition-all duration-700 ease-out ${
-          pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-        }`}
+        className={`transition-all duration-700 ease-out ${pageReady ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+          }`}
       >
         <div
-          className={`max-w-6xl mx-auto px-8 ${
-            isLoggedIn ? 'pt-12' : 'pt-8'
-          } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
+          className={`max-w-6xl mx-auto px-8 ${isLoggedIn ? 'pt-12' : 'pt-8'
+            } ${isLoggedIn ? 'grid grid-cols-1 lg:grid-cols-2 gap-10 items-start' : ''}`}
         >
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-[#0cb9eb]/80 font-semibold">
@@ -389,11 +387,10 @@ export default function Home() {
                       setActiveTab(tab)
                       removeFile()
                     }}
-                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${
-                      activeTab === tab
+                    className={`px-4 py-2 rounded-full text-sm font-semibold uppercase tracking-wide transition-all duration-200 border ${activeTab === tab
                         ? 'bg-blue-500/25 border-blue-300/60 text-white shadow-[0_0_24px_rgba(59,130,246,0.22)]'
                         : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
-                    }`}
+                      }`}
                   >
                     {tab}
                   </button>
@@ -445,15 +442,13 @@ export default function Home() {
                 }}
                 onDrop={handleDrop}
                 onClick={handleUploadAreaClick}
-                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${
-                  isLoggedIn && !file ? 'cursor-pointer' : ''
-                } ${
-                  !isLoggedIn
+                className={`border-2 border-dashed rounded-2xl flex flex-col items-center justify-center h-72 transition-all duration-200 ${isLoggedIn && !file ? 'cursor-pointer' : ''
+                  } ${!isLoggedIn
                     ? 'border-white/10 bg-[#020617]/40 opacity-80 cursor-not-allowed'
                     : dragging
-                    ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
-                    : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
-                }`}
+                      ? 'border-blue-400 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.12)] scale-[1.01]'
+                      : 'border-[#0cb9eb]/50 bg-[#020617]/70 hover:border-[#0cb9eb]/70 hover:bg-[#03102a] hover:shadow-[0_0_26px_rgba(12,185,235,0.12)]'
+                  }`}
               >
                 {file ? (
                   <div className="flex flex-col items-center gap-3 px-4 text-center">
@@ -485,11 +480,10 @@ export default function Home() {
                 ) : (
                   <>
                     <div
-                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${
-                        dragging
+                      className={`w-14 h-14 rounded-full border flex items-center justify-center mb-4 transition-all duration-200 ${dragging
                           ? 'bg-blue-500 text-white border-blue-300 shadow-[0_0_20px_rgba(59,130,246,0.35)]'
                           : 'bg-white/5 text-blue-300 border-blue-400/20'
-                      }`}
+                        }`}
                     >
                       <span className="text-xl">↑</span>
                     </div>
@@ -512,17 +506,16 @@ export default function Home() {
               <button
                 onClick={handleUpload}
                 disabled={!file || !isLoggedIn || isAnalyzing}
-                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${
-                  file && isLoggedIn && !isAnalyzing
+                className={`w-full py-3 rounded-xl font-bold tracking-[0.02em] transition-all duration-200 ${file && isLoggedIn && !isAnalyzing
                     ? 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:scale-[1.01] active:scale-[0.99] shadow-[0_0_25px_rgba(59,130,246,0.25)]'
                     : 'bg-white/10 text-slate-400 cursor-not-allowed'
-                }`}
+                  }`}
               >
                 {isAnalyzing
                   ? 'Analyzing...'
                   : isLoggedIn
-                  ? `Analyse ${capitalisedTab}`
-                  : 'Log in to analyse'}
+                    ? `Analyse ${capitalisedTab}`
+                    : 'Log in to analyse'}
               </button>
 
               {predictionResult && predictionResult.prediction && predictionResult.probabilities && (
@@ -534,21 +527,19 @@ export default function Home() {
                   <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${
-                          predictionResult.prediction === 'real'
+                        className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${predictionResult.prediction === 'real'
                             ? 'bg-green-500/20 border-2 border-green-400/50'
                             : 'bg-red-500/20 border-2 border-red-400/50'
-                        }`}
+                          }`}
                       >
                         {predictionResult.prediction === 'real' ? '✓' : '⚠'}
                       </div>
                       <div>
                         <p
-                          className={`text-2xl font-bold ${
-                            predictionResult.prediction === 'real'
+                          className={`text-2xl font-bold ${predictionResult.prediction === 'real'
                               ? 'text-green-400'
                               : 'text-red-400'
-                          }`}
+                            }`}
                         >
                           {predictionResult.prediction === 'real' ? 'AUTHENTIC' : 'FAKE'}
                         </p>
