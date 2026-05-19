@@ -246,13 +246,54 @@ export default function Home() {
         return
       }
 
-      if (!data?.prediction?.prediction || !data?.prediction?.probabilities) {
-        setError(data?.error || 'Analysis result was not returned by the server.')
+      const result = data.result || data.prediction
+
+      if (!result || !result.prediction) {
+        setError(data?.error || data?.detail || 'Analysis result was not returned by the server.')
         setAnalysisTime(parseFloat(analysisTimeSeconds))
         return
       }
 
-      setPredictionResult(data.prediction)
+      const toPercentFromProbability = (value: any) => {
+        return (Number(value) || 0) * 100
+      }
+
+      const normalizedResult: PredictionResult = {
+        prediction: result.prediction as 'fake' | 'real',
+        confidence:
+          result.confidence_percent != null
+            ? Number(result.confidence_percent)
+            : result.confidence != null && Number(result.confidence) > 1
+            ? Number(result.confidence)
+            : toPercentFromProbability(
+                result.confidence ??
+                Math.max(result.real_probability ?? 0, result.fake_probability ?? 0)
+              ),
+        probabilities: {
+          real:
+            result.probabilities?.real != null
+              ? toPercentFromProbability(result.probabilities.real)
+              : result.real_percent != null
+              ? Number(result.real_percent)
+              : result.real_probability != null
+              ? toPercentFromProbability(result.real_probability)
+              : result.real_prob != null
+              ? toPercentFromProbability(result.real_prob)
+              : 0,
+          fake:
+            result.probabilities?.fake != null
+              ? toPercentFromProbability(result.probabilities.fake)
+              : result.fake_percent != null
+              ? Number(result.fake_percent)
+              : result.fake_probability != null
+              ? toPercentFromProbability(result.fake_probability)
+              : result.fake_prob != null
+              ? toPercentFromProbability(result.fake_prob)
+              : 0,
+        },
+      }
+
+      setPredictionResult(normalizedResult)
       setAnalysisTime(parseFloat(analysisTimeSeconds))
 
       const userKey = user.uid || user.email || ''
@@ -260,10 +301,10 @@ export default function Home() {
         const updatedHistory = addHistoryEntry(userKey, {
           fileName: file.name,
           mediaType: activeTab,
-          verdict: data.prediction.prediction,
-          confidence: data.prediction.confidence,
-          fakeProbability: data.prediction.probabilities.fake,
-          realProbability: data.prediction.probabilities.real,
+          verdict: normalizedResult.prediction,
+          confidence: normalizedResult.confidence,
+          fakeProbability: normalizedResult.probabilities.fake,
+          realProbability: normalizedResult.probabilities.real,
           analysisTime: parseFloat(analysisTimeSeconds),
           analyzedAt: new Date().toISOString(),
         })

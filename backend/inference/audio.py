@@ -231,3 +231,7 @@ def load_audio_detector(model_path: str = "models/audio_model.pth", device: str 
         AudioDeepfakeDetector instance
     """
     return AudioDeepfakeDetector(model_path=model_path, device=device)
+
+def predict_audio(audio_path: str) -> Dict:
+    detector = load_audio_detector()
+    return detector.predict(audio_path)
