@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithPopup
+  signInWithRedirect
 } from 'firebase/auth'
 import Navbar from '@/components/Navbar'
 import {
@@ -112,7 +112,7 @@ export default function LoginPage() {
 
     try {
       setLoading(true)
-      await signInWithPopup(firebaseAuth, googleProvider)
+      await signInWithRedirect(firebaseAuth, googleProvider)
       router.push('/')
     } catch (err: any) {
       setError(getLoginErrorMessage(err))
