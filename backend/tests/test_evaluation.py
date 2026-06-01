@@ -1,54 +1,56 @@
+"""
+Manual model evaluation script.
+Samples 20 real and 20 fake files from each version2 test dataset.
+"""
+
 import csv
 import random
-import traceback
-import logging
+import sys
 import warnings
 from pathlib import Path
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
+
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
-# ==========================================================
-# CLEAN TERMINAL OUTPUT
-# ==========================================================
+from inference.audio import initialize_model as initialize_audio_model
+from inference.audio import predict_audio
+from inference.image import initialize_model as initialize_image_model
+from inference.image import predict_image
+from inference.video import load_video_detector
 
-logging.getLogger("inference.image").setLevel(logging.WARNING)
-logging.getLogger("inference.audio").setLevel(logging.WARNING)
-logging.getLogger("inference.video").setLevel(logging.WARNING)
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message="PySoundFile failed.*")
+warnings.filterwarnings("ignore", message=".*Trying audioread instead.*")
 
-# ==========================================================
-# SETTINGS
-# ==========================================================
 
-SAMPLES_PER_CLASS = 50
+SAMPLES_PER_CLASS = 20
 OUTPUT_CSV = "evaluation_results.csv"
 
-IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"]
-AUDIO_EXTS = [".wav", ".mp3", ".flac"]
-VIDEO_EXTS = [".mp4", ".avi", ".mov"]
+IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
+AUDIO_EXTENSIONS = [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
+VIDEO_EXTENSIONS = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"]
 
-# ==========================================================
-# IMPORT PREDICTION FUNCTIONS
-# ==========================================================
+IMAGE_MODEL_PATH = r"models\image_model.pth"
+AUDIO_MODEL_PATH = r"models\audio_model.pth"
+VIDEO_MODEL_PATH = r"models\video_model.pth"
 
-from inference.image import predict_image, initialize_model
-from inference.video import predict_video
-from inference.audio import predict_audio
 
-initialize_model(r"models\image_model.pth")
+initialize_image_model(IMAGE_MODEL_PATH)
+initialize_audio_model(AUDIO_MODEL_PATH)
+video_detector = load_video_detector(VIDEO_MODEL_PATH)
 
-# ==========================================================
-# HELPERS
-# ==========================================================
 
-def collect_files(folder, exts, limit):
+def collect_files(folder, extensions, limit):
     files = []
 
-    for ext in exts:
-        files.extend(folder.rglob(f"*{ext}"))
+    for extension in extensions:
+        files.extend(folder.rglob(f"*{extension}"))
 
     random.shuffle(files)
+
     return files[:limit]
 
 
@@ -85,7 +87,7 @@ def normalise_prediction(result):
     return "error", confidence
 
 
-def run_single_prediction(media_type, sample_path):
+def run_prediction(media_type, sample_path):
     if media_type == "image":
         return predict_image(str(sample_path))
 
@@ -93,12 +95,12 @@ def run_single_prediction(media_type, sample_path):
         return predict_audio(str(sample_path))
 
     if media_type == "video":
-        return predict_video(str(sample_path))
+        return video_detector.predict(str(sample_path))
 
     raise ValueError(f"Unknown media type: {media_type}")
 
 
-def test_media_type(media_type, test_path, exts):
+def test_media_type(media_type, test_path, extensions):
     rows = []
 
     print(f"\nTesting {media_type.upper()}")
@@ -110,48 +112,68 @@ def test_media_type(media_type, test_path, exts):
             print(f"Missing folder: {folder}")
             continue
 
-        samples = collect_files(folder, exts, SAMPLES_PER_CLASS)
+        samples = collect_files(folder, extensions, SAMPLES_PER_CLASS)
         print(f"{actual_label}: {len(samples)} samples")
 
         for sample_path in samples:
             try:
-                result = run_single_prediction(media_type, sample_path)
+                result = run_prediction(media_type, sample_path)
                 predicted_label, confidence = normalise_prediction(result)
                 error_message = ""
 
-            except Exception as e:
+            except Exception as error:
                 predicted_label = "error"
                 confidence = 0
-                error_message = str(e)
+                error_message = str(error)
 
-            rows.append({
-                "media_type": media_type,
-                "file_path": str(sample_path),
-                "actual_label": actual_label,
-                "predicted_label": predicted_label,
-                "confidence": confidence,
-                "pass": actual_label == predicted_label,
-                "error": error_message
-            })
+            rows.append(
+                {
+                    "media_type": media_type,
+                    "file_path": str(sample_path),
+                    "actual_label": actual_label,
+                    "predicted_label": predicted_label,
+                    "confidence": confidence,
+                    "pass": actual_label == predicted_label,
+                    "error": error_message,
+                }
+            )
 
     return rows
 
 
 def calculate_metrics(rows):
-    valid_rows = [r for r in rows if r["predicted_label"] in ["real", "fake"]]
+    valid_rows = [
+        row
+        for row in rows
+        if row["predicted_label"] in ["real", "fake"]
+    ]
 
     if not valid_rows:
         return None
 
-    y_true = [r["actual_label"] for r in valid_rows]
-    y_pred = [r["predicted_label"] for r in valid_rows]
+    y_true = [row["actual_label"] for row in valid_rows]
+    y_pred = [row["predicted_label"] for row in valid_rows]
 
     return {
         "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, pos_label="fake", zero_division=0),
-        "recall": recall_score(y_true, y_pred, pos_label="fake", zero_division=0),
+        "precision": precision_score(
+            y_true,
+            y_pred,
+            pos_label="fake",
+            zero_division=0,
+        ),
+        "recall": recall_score(
+            y_true,
+            y_pred,
+            pos_label="fake",
+            zero_division=0,
+        ),
         "total": len(valid_rows),
-        "correct": sum(1 for r in valid_rows if r["actual_label"] == r["predicted_label"])
+        "correct": sum(
+            1
+            for row in valid_rows
+            if row["actual_label"] == row["predicted_label"]
+        ),
     }
 
 
@@ -170,9 +192,9 @@ def print_metrics(name, metrics):
 
 
 def save_csv(rows):
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
-            f,
+            file,
             fieldnames=[
                 "media_type",
                 "file_path",
@@ -180,17 +202,13 @@ def save_csv(rows):
                 "predicted_label",
                 "confidence",
                 "pass",
-                "error"
-            ]
+                "error",
+            ],
         )
 
         writer.writeheader()
         writer.writerows(rows)
 
-
-# ==========================================================
-# MAIN
-# ==========================================================
 
 def main():
     random.seed(42)
@@ -198,19 +216,19 @@ def main():
     datasets = [
         {
             "media_type": "image",
-            "path": Path(r"E:\FakeDetection\raw_datasets\image\test"),
-            "exts": IMAGE_EXTS
+            "path": Path(r"E:\FakeDetection\raw_datasets\image\version2\test"),
+            "extensions": IMAGE_EXTENSIONS,
         },
         {
             "media_type": "audio",
-            "path": Path(r"E:\FakeDetection\raw_datasets\audio\test"),
-            "exts": AUDIO_EXTS
+            "path": Path(r"E:\FakeDetection\raw_datasets\audio\version2\test"),
+            "extensions": AUDIO_EXTENSIONS,
         },
         {
             "media_type": "video",
-            "path": Path(r"E:\FakeDetection\raw_datasets\video\version1\test"),
-            "exts": VIDEO_EXTS
-        }
+            "path": Path(r"E:\FakeDetection\raw_datasets\video\version2\test"),
+            "extensions": VIDEO_EXTENSIONS,
+        },
     ]
 
     all_rows = []
@@ -219,7 +237,7 @@ def main():
         rows = test_media_type(
             dataset["media_type"],
             dataset["path"],
-            dataset["exts"]
+            dataset["extensions"],
         )
 
         all_rows.extend(rows)

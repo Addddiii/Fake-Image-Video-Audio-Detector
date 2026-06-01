@@ -1,8 +1,7 @@
-﻿# ============================================================
-# Video Preprocessing Script
-# Extracts 32 face-cropped frames from each video.
-# Output is used by train_video.py.
-# ============================================================
+﻿"""
+Preprocess video datasets for video model training.
+Extracts face-cropped frames and saves them by video.
+"""
 
 from pathlib import Path
 import shutil
@@ -10,48 +9,24 @@ import shutil
 import cv2
 import dlib
 import numpy as np
-from tqdm import tqdm
 from skimage import transform as trans
+from tqdm import tqdm
 
 
-# =========================
-# PATHS
-# =========================
+RAW_DIR = Path(r"D:\videos_raw")
+OUTPUT_DIR = Path(r"D:\videos_processed")
 
-RAW_DIR = Path(r"D:\Videos\raw")
-OUTPUT_DIR = Path(r"D:\Videos\processed")
-
-DLIB_TOOLS = Path(r"C:\Users\moeya\Downloads\Fake-Image-Video-Audio-Detector\backend\dlib_tools")
-PREDICTOR_PATH = DLIB_TOOLS / "shape_predictor_81_face_landmarks.dat"
-
-
-# =========================
-# SETTINGS
-# =========================
+BASE_DIR = Path(__file__).resolve().parents[1]
+PREDICTOR_PATH = BASE_DIR / "dlib_tools" / "shape_predictor_81_face_landmarks.dat"
 
 FRAMES_PER_VIDEO = 32
 IMAGE_SIZE = 256
+CLEAN_OUTPUT = False
 
-CLEAN_OUTPUT = False  # set True only if you want to delete old processed folder
-
-VIDEO_EXTENSIONS = {
-    ".mp4",
-    ".avi",
-    ".mov",
-    ".mkv",
-    ".webm",
-    ".m4v",
-}
-
-
-# =========================
-# DLIB SETUP
-# =========================
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
 
 if not PREDICTOR_PATH.exists():
-    raise FileNotFoundError(
-        f"Missing dlib predictor file: {PREDICTOR_PATH}"
-    )
+    raise FileNotFoundError(f"Missing dlib predictor file: {PREDICTOR_PATH}")
 
 face_detector = dlib.get_frontal_face_detector()
 face_predictor = dlib.shape_predictor(str(PREDICTOR_PATH))
@@ -60,10 +35,6 @@ haar_detector = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
 
-
-# =========================
-# FACE CROPPING
-# =========================
 
 def get_alignment_keypoints(image_rgb, face):
     shape = face_predictor(image_rgb, face)
@@ -80,9 +51,8 @@ def get_alignment_keypoints(image_rgb, face):
     ).astype(np.float32)
 
 
-def crop_face_dlib(frame_bgr, image_size=256):
+def crop_face_dlib(frame_bgr, image_size=IMAGE_SIZE):
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
     faces = face_detector(rgb, 0)
 
     if len(faces) == 0:
@@ -97,18 +67,20 @@ def crop_face_dlib(frame_bgr, image_size=256):
 
     target_size = [112, 112]
 
-    dst = np.array([
-        [30.2946, 51.6963],
-        [65.5318, 51.5014],
-        [48.0252, 71.7366],
-        [33.5493, 92.3655],
-        [62.7299, 92.2041],
-    ], dtype=np.float32)
+    destination = np.array(
+        [
+            [30.2946, 51.6963],
+            [65.5318, 51.5014],
+            [48.0252, 71.7366],
+            [33.5493, 92.3655],
+            [62.7299, 92.2041],
+        ],
+        dtype=np.float32,
+    )
 
-    dst[:, 0] += 8.0
-
-    dst[:, 0] = dst[:, 0] * image_size / target_size[0]
-    dst[:, 1] = dst[:, 1] * image_size / target_size[1]
+    destination[:, 0] += 8.0
+    destination[:, 0] = destination[:, 0] * image_size / target_size[0]
+    destination[:, 1] = destination[:, 1] * image_size / target_size[1]
 
     scale = 1.3
     margin_rate = scale - 1
@@ -116,32 +88,30 @@ def crop_face_dlib(frame_bgr, image_size=256):
     x_margin = image_size * margin_rate / 2
     y_margin = image_size * margin_rate / 2
 
-    dst[:, 0] += x_margin
-    dst[:, 1] += y_margin
+    destination[:, 0] += x_margin
+    destination[:, 1] += y_margin
 
-    dst[:, 0] *= image_size / (image_size + 2 * x_margin)
-    dst[:, 1] *= image_size / (image_size + 2 * y_margin)
+    destination[:, 0] *= image_size / (image_size + 2 * x_margin)
+    destination[:, 1] *= image_size / (image_size + 2 * y_margin)
 
-    tform = trans.SimilarityTransform()
-    success = tform.estimate(keypoints, dst)
-
-    if not success:
+    try:
+        transform = trans.SimilarityTransform.from_estimate(
+            keypoints,
+            destination,
+        )
+    except Exception:
         return None
 
-    matrix = tform.params[0:2, :]
+    if transform is None:
+        return None
 
-    cropped_rgb = cv2.warpAffine(
-        rgb,
-        matrix,
-        (image_size, image_size),
-    )
+    matrix = transform.params[0:2, :]
+    cropped_rgb = cv2.warpAffine(rgb, matrix, (image_size, image_size))
 
-    cropped_bgr = cv2.cvtColor(cropped_rgb, cv2.COLOR_RGB2BGR)
-
-    return cropped_bgr
+    return cv2.cvtColor(cropped_rgb, cv2.COLOR_RGB2BGR)
 
 
-def crop_face_haar(frame_bgr, image_size=256):
+def crop_face_haar(frame_bgr, image_size=IMAGE_SIZE):
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
     faces = haar_detector.detectMultiScale(
@@ -171,7 +141,7 @@ def crop_face_haar(frame_bgr, image_size=256):
     return cv2.resize(face, (image_size, image_size))
 
 
-def crop_face(frame_bgr, image_size=256):
+def crop_face(frame_bgr, image_size=IMAGE_SIZE):
     face = crop_face_dlib(frame_bgr, image_size=image_size)
 
     if face is not None:
@@ -184,10 +154,6 @@ def crop_face(frame_bgr, image_size=256):
 
     return cv2.resize(frame_bgr, (image_size, image_size))
 
-
-# =========================
-# FRAME EXTRACTION
-# =========================
 
 def extract_frames_from_video(video_path):
     cap = cv2.VideoCapture(str(video_path))
@@ -209,7 +175,7 @@ def extract_frames_from_video(video_path):
         dtype=int,
     )
 
-    faces = []
+    frames = []
 
     for frame_index in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
@@ -219,23 +185,18 @@ def extract_frames_from_video(video_path):
         if not ret or frame is None:
             continue
 
-        face = crop_face(frame, image_size=IMAGE_SIZE)
-        faces.append(face)
+        frames.append(crop_face(frame, image_size=IMAGE_SIZE))
 
     cap.release()
 
-    if len(faces) == 0:
+    if len(frames) == 0:
         return []
 
-    while len(faces) < FRAMES_PER_VIDEO:
-        faces.append(faces[-1].copy())
+    while len(frames) < FRAMES_PER_VIDEO:
+        frames.append(frames[-1].copy())
 
-    return faces[:FRAMES_PER_VIDEO]
+    return frames[:FRAMES_PER_VIDEO]
 
-
-# =========================
-# PROCESSING
-# =========================
 
 def collect_videos(split, label_name):
     folder = RAW_DIR / split / label_name
@@ -244,11 +205,11 @@ def collect_videos(split, label_name):
         print(f"Missing folder: {folder}")
         return []
 
-    videos = []
-
-    for file_path in folder.rglob("*"):
-        if file_path.is_file() and file_path.suffix.lower() in VIDEO_EXTENSIONS:
-            videos.append(file_path)
+    videos = [
+        file_path
+        for file_path in folder.rglob("*")
+        if file_path.is_file() and file_path.suffix.lower() in VIDEO_EXTENSIONS
+    ]
 
     return sorted(videos)
 
@@ -256,8 +217,8 @@ def collect_videos(split, label_name):
 def save_video_frames(frames, output_folder):
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    for i, frame in enumerate(frames):
-        output_path = output_folder / f"frame_{i:03d}.png"
+    for index, frame in enumerate(frames):
+        output_path = output_folder / f"frame_{index:03d}.png"
         cv2.imwrite(str(output_path), frame)
 
 
@@ -269,7 +230,7 @@ def process_split_label(split, label_name):
     saved_count = 0
     skipped_count = 0
 
-    for idx, video_path in enumerate(
+    for index, video_path in enumerate(
         tqdm(videos, desc=f"Processing {split}/{label_name}", unit="video"),
         start=1,
     ):
@@ -279,11 +240,10 @@ def process_split_label(split, label_name):
             skipped_count += 1
             continue
 
-        output_name = f"{label_name}_{idx:05d}"
+        output_name = f"{label_name}_{index:05d}"
         output_folder = OUTPUT_DIR / split / label_name / output_name
 
         save_video_frames(frames, output_folder)
-
         saved_count += 1
 
     print(f"{split}/{label_name} saved: {saved_count}")
@@ -296,11 +256,7 @@ def print_final_counts():
     for split in ["train", "eval", "test"]:
         for label_name in ["real", "fake"]:
             folder = OUTPUT_DIR / split / label_name
-
-            if folder.exists():
-                count = len([p for p in folder.iterdir() if p.is_dir()])
-            else:
-                count = 0
+            count = len([path for path in folder.iterdir() if path.is_dir()]) if folder.exists() else 0
 
             print(f"{split}/{label_name}: {count}")
 
@@ -317,9 +273,7 @@ def main():
             process_split_label(split, label_name)
 
     print_final_counts()
-
-    print("\nDONE")
-    print(f"Processed videos saved to: {OUTPUT_DIR}")
+    print(f"\nProcessed videos saved to: {OUTPUT_DIR}")
 
 
 if __name__ == "__main__":

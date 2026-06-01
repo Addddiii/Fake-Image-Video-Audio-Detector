@@ -228,10 +228,17 @@ export default function Home() {
       setIsAnalyzing(true)
       const startTime = performance.now()
 
-      const response = await fetch('http://127.0.0.1:8000/upload', {
+      const endpoint =
+        activeTab === 'image'
+          ? 'http://127.0.0.1:8000/predict/image'
+          : activeTab === 'video'
+          ? 'http://127.0.0.1:8000/predict/video'
+          : 'http://127.0.0.1:8000/predict/audio'
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorisation: `Bearer ${token}`,
         },
         body: formData,
       })
@@ -255,7 +262,11 @@ export default function Home() {
       }
 
       const toPercentFromProbability = (value: any) => {
-        return (Number(value) || 0) * 100
+        const num = Number(value) || 0
+
+        if (num > 1) return Number(num.toFixed(2))
+
+        return Number((num * 100).toFixed(2))
       }
 
       const normalizedResult: PredictionResult = {
@@ -594,7 +605,7 @@ export default function Home() {
                           {predictionResult.prediction === 'real' ? 'AUTHENTIC' : 'FAKE'}
                         </p>
                         <p className="text-slate-400 text-sm">
-                          Confidence: {predictionResult.confidence}%
+                          Confidence: {predictionResult.confidence.toFixed(2)}%
                         </p>
                       </div>
                     </div>
@@ -611,7 +622,7 @@ export default function Home() {
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-slate-400">Real Probability</span>
                         <span className="text-green-400 font-semibold">
-                          {predictionResult.probabilities.real}%
+                          {predictionResult.probabilities.real.toFixed(2)}%
                         </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
@@ -626,7 +637,7 @@ export default function Home() {
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-slate-400">Fake Probability</span>
                         <span className="text-red-400 font-semibold">
-                          {predictionResult.probabilities.fake}%
+                          {predictionResult.probabilities.fake.toFixed(2)}%
                         </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">

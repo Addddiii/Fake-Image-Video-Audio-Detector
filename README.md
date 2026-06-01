@@ -79,7 +79,7 @@ pip install -r requirements.txt
 
 Run backend:
 
-py -3.12 -m uvicorn main:app --reload  
+py -3.12 -m uvicorn app.main:app --reload
 
 Backend URL:  
 http://localhost:8000  

@@ -1,4 +1,10 @@
+"""
+Precompute handcrafted video features for video model training.
+Creates one cached feature vector per processed video folder.
+"""
+
 from pathlib import Path
+
 import cv2
 import dlib
 import numpy as np
@@ -8,73 +14,44 @@ from torchvision import transforms
 from tqdm import tqdm
 
 
-# =========================
-# PATHS
-# =========================
-
 BASE_DIR = Path(__file__).resolve().parents[1]
 
-DATA_DIR = Path(r"D:\Videos\processed")
+DATA_DIR = Path(r"D:\videos_processed")
 FEATURE_CACHE_PATH = DATA_DIR / "video_feature_cache.pt"
 
 PREDICTOR_PATH = BASE_DIR / "dlib_tools" / "shape_predictor_81_face_landmarks.dat"
-
-
-# =========================
-# SETTINGS
-# =========================
 
 IMAGE_SIZE = 256
 FRAMES_PER_VIDEO = 32
 MIN_FRAMES_REQUIRED = 16
 
-VIDEO_EXTS = {".png", ".jpg", ".jpeg"}
-
-
-# =========================
-# DLIB SETUP
-# =========================
+FRAME_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
 if not PREDICTOR_PATH.exists():
-    raise FileNotFoundError(
-        f"Missing dlib predictor file: {PREDICTOR_PATH}"
-    )
+    raise FileNotFoundError(f"Missing dlib predictor file: {PREDICTOR_PATH}")
 
 face_detector = dlib.get_frontal_face_detector()
 face_predictor = dlib.shape_predictor(str(PREDICTOR_PATH))
 
+raw_transform = transforms.Compose(
+    [
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.ToTensor(),
+    ]
+)
 
-# =========================
-# TRANSFORMS
-# =========================
-
-raw_tf = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.ToTensor()
-])
-
-
-# =========================
-# FRAME SELECTION
-# =========================
 
 def select_frames(frames):
-    """
-    Always returns exactly 32 frame paths.
-
-    32+ frames: evenly sample 32
-    16–31 frames: use available frames, repeat last frame
-    """
-
     frames = list(frames)
 
     if len(frames) >= FRAMES_PER_VIDEO:
         step = len(frames) / FRAMES_PER_VIDEO
         indexes = [
-            min(int(i * step), len(frames) - 1)
-            for i in range(FRAMES_PER_VIDEO)
+            min(int(index * step), len(frames) - 1)
+            for index in range(FRAMES_PER_VIDEO)
         ]
-        return [frames[i] for i in indexes]
+
+        return [frames[index] for index in indexes]
 
     padded = frames[:]
 
@@ -84,16 +61,11 @@ def select_frames(frames):
     return padded
 
 
-# =========================
-# LANDMARK HELPERS
-# =========================
-
 def get_landmarks_from_pil(image):
     image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
     image_np = np.array(image)
 
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-
     faces = face_detector(gray, 0)
 
     if len(faces) == 0:
@@ -102,10 +74,7 @@ def get_landmarks_from_pil(image):
     face = max(faces, key=lambda rect: rect.width() * rect.height())
     shape = face_predictor(gray, face)
 
-    points = []
-
-    for i in range(shape.num_parts):
-        points.append([shape.part(i).x, shape.part(i).y])
+    points = [[shape.part(index).x, shape.part(index).y] for index in range(shape.num_parts)]
 
     return torch.tensor(points, dtype=torch.float32)
 
@@ -131,28 +100,25 @@ def mouth_opening_ratio(mouth_points):
 
 
 def compute_landmark_features(landmarks_list):
-    valid = [lm for lm in landmarks_list if lm is not None]
+    valid_landmarks = [landmarks for landmarks in landmarks_list if landmarks is not None]
 
-    if len(valid) < 2:
+    if len(valid_landmarks) < 2:
         return torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
 
-    landmarks = torch.stack(valid)
+    landmarks = torch.stack(valid_landmarks)
 
-    # 1. Mouth/lip movement
     mouth_ratios = []
 
-    for lm in landmarks:
-        if lm.shape[0] > 67:
-            mouth = lm[48:68]
+    for landmark_item in landmarks:
+        if landmark_item.shape[0] > 67:
+            mouth = landmark_item[48:68]
             mouth_ratios.append(mouth_opening_ratio(mouth))
 
     if len(mouth_ratios) >= 2:
-        mouth_ratios = torch.stack(mouth_ratios)
-        mouth_score = mouth_ratios.std()
+        mouth_score = torch.stack(mouth_ratios).std()
     else:
         mouth_score = torch.tensor(0.0)
 
-    # 2. Face motion consistency
     stable_indices = [30, 36, 45, 48, 54]
 
     if landmarks.shape[1] > max(stable_indices):
@@ -160,7 +126,7 @@ def compute_landmark_features(landmarks_list):
 
         motion = torch.norm(
             stable_points[1:] - stable_points[:-1],
-            dim=2
+            dim=2,
         ).mean(dim=1)
 
         motion = motion / IMAGE_SIZE
@@ -173,13 +139,12 @@ def compute_landmark_features(landmarks_list):
     else:
         face_motion_consistency = torch.tensor(0.0)
 
-    # 3. Eye/blink movement
     eye_ratios = []
 
-    for lm in landmarks:
-        if lm.shape[0] > 47:
-            left_eye = lm[36:42]
-            right_eye = lm[42:48]
+    for landmark_item in landmarks:
+        if landmark_item.shape[0] > 47:
+            left_eye = landmark_item[36:42]
+            right_eye = landmark_item[42:48]
 
             left_ear = eye_aspect_ratio(left_eye)
             right_ear = eye_aspect_ratio(right_eye)
@@ -187,41 +152,40 @@ def compute_landmark_features(landmarks_list):
             eye_ratios.append((left_ear + right_ear) / 2.0)
 
     if len(eye_ratios) >= 2:
-        eye_ratios = torch.stack(eye_ratios)
-        eye_score = eye_ratios.std()
+        eye_score = torch.stack(eye_ratios).std()
     else:
         eye_score = torch.tensor(0.0)
 
-    features = torch.stack([
-        mouth_score * 10.0,
-        face_motion_consistency,
-        eye_score * 10.0,
-    ])
+    features = torch.stack(
+        [
+            mouth_score * 10.0,
+            face_motion_consistency,
+            eye_score * 10.0,
+        ]
+    )
 
     return torch.clamp(features, 0.0, 1.0).float()
 
 
-# =========================
-# ARTIFACT FEATURE
-# =========================
-
 def compute_laplacian_variance(gray):
     kernel = torch.tensor(
-        [[0.0, 1.0, 0.0],
-         [1.0, -4.0, 1.0],
-         [0.0, 1.0, 0.0]],
-        dtype=gray.dtype
+        [
+            [0.0, 1.0, 0.0],
+            [1.0, -4.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=gray.dtype,
     ).view(1, 1, 3, 3)
 
     gray = gray.unsqueeze(0).unsqueeze(0)
 
-    lap = torch.nn.functional.conv2d(
+    laplacian = torch.nn.functional.conv2d(
         gray,
         kernel,
-        padding=1
+        padding=1,
     )
 
-    return lap.var()
+    return laplacian.var()
 
 
 def compute_artifact_feature(raw_frames):
@@ -239,9 +203,8 @@ def compute_artifact_feature(raw_frames):
         artifact_score = torch.tensor(0.0)
 
     artifact_score = artifact_score * 100.0
-    artifact_score = torch.clamp(artifact_score, 0.0, 1.0)
 
-    return artifact_score.float()
+    return torch.clamp(artifact_score, 0.0, 1.0).float()
 
 
 def compute_features_for_video(frame_paths):
@@ -254,30 +217,22 @@ def compute_features_for_video(frame_paths):
         image = Image.open(frame_path).convert("RGB")
 
         landmarks_list.append(get_landmarks_from_pil(image))
-        raw_images.append(raw_tf(image))
+        raw_images.append(raw_transform(image))
 
     raw_images = torch.stack(raw_images)
 
     landmark_features = compute_landmark_features(landmarks_list)
     artifact_feature = compute_artifact_feature(raw_images).view(1)
 
-    features = torch.cat([landmark_features, artifact_feature], dim=0)
-
-    return features.float()
+    return torch.cat([landmark_features, artifact_feature], dim=0).float()
 
 
-# =========================
-# MAIN
-# =========================
-
-def main():
-    feature_cache = {}
-
+def collect_video_samples():
     samples = []
 
     for split in ["train", "eval", "test"]:
-        for label in ["real", "fake"]:
-            folder = DATA_DIR / split / label
+        for label_name in ["real", "fake"]:
+            folder = DATA_DIR / split / label_name
 
             if not folder.exists():
                 print(f"Missing folder: {folder}")
@@ -287,29 +242,35 @@ def main():
                 if not video_folder.is_dir():
                     continue
 
-                frames = (
-                    sorted(video_folder.glob("*.png")) +
-                    sorted(video_folder.glob("*.jpg")) +
-                    sorted(video_folder.glob("*.jpeg"))
-                )
+                frames = [
+                    file_path
+                    for file_path in sorted(video_folder.iterdir())
+                    if file_path.is_file() and file_path.suffix.lower() in FRAME_EXTENSIONS
+                ]
 
                 if len(frames) >= MIN_FRAMES_REQUIRED:
-                    key = f"{split}/{label}/{video_folder.name}"
+                    key = f"{split}/{label_name}/{video_folder.name}"
                     samples.append((key, frames))
+
+    return samples
+
+
+def main():
+    feature_cache = {}
+    samples = collect_video_samples()
 
     print(f"Total videos to precompute: {len(samples)}")
 
     for key, frames in tqdm(samples, desc="Precomputing features", unit="video"):
         try:
             feature_cache[key] = compute_features_for_video(frames)
-        except Exception as e:
-            print(f"Failed {key}: {e}")
+        except Exception as error:
+            print(f"Failed {key}: {error}")
             feature_cache[key] = torch.zeros(4, dtype=torch.float32)
 
     torch.save(feature_cache, FEATURE_CACHE_PATH)
 
-    print("\nDONE")
-    print(f"Saved feature cache to: {FEATURE_CACHE_PATH}")
+    print(f"\nSaved feature cache to: {FEATURE_CACHE_PATH}")
     print(f"Total cached videos: {len(feature_cache)}")
 
 

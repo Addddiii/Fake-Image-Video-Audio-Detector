@@ -1,36 +1,30 @@
+"""
+Video deepfake detection inference.
+"""
+
 from pathlib import Path
 import sys
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(BASE_DIR))
+from typing import Dict
 
 import cv2
 import dlib
 import numpy as np
 import torch
-from torchvision import transforms
 from PIL import Image
 from skimage import transform as trans
+from torchvision import transforms
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
 
 from architectures.video_model import VideoClassifierLSTM
 
 
-# =========================
-# PATHS
-# =========================
-
 MODEL_PATH = BASE_DIR / "models" / "video_model.pth"
+PREDICTOR_81 = BASE_DIR / "dlib_tools" / "shape_predictor_81_face_landmarks.dat"
 
-DLIB_TOOLS = BASE_DIR / "dlib_tools"
-PREDICTOR_81 = DLIB_TOOLS / "shape_predictor_81_face_landmarks.dat"
-
-
-# =========================
-# DEFAULTS
-# =========================
-
-DEFAULT_FRAMES_PER_VIDEO = 12
-DEFAULT_IMAGE_SIZE = 256
+DEFAULT_FRAMES_PER_VIDEO = 6
+DEFAULT_IMAGE_SIZE = 224
 
 LSTM_HIDDEN = 256
 LSTM_LAYERS = 2
@@ -39,51 +33,77 @@ EXTRA_FEATURE_DIM = 4
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-# =========================
-# DLIB SETUP
-# =========================
+if DEVICE.type == "cuda":
+    torch.backends.cudnn.benchmark = True
 
 if not PREDICTOR_81.exists():
-    raise FileNotFoundError(
-        f"Missing dlib predictor file: {PREDICTOR_81}\n"
-        "Put shape_predictor_81_face_landmarks.dat inside backend/dlib_tools."
-    )
+    raise FileNotFoundError(f"Missing dlib predictor file: {PREDICTOR_81}")
 
 face_detector = dlib.get_frontal_face_detector()
 face_predictor = dlib.shape_predictor(str(PREDICTOR_81))
 
-
-# OpenCV fallback if dlib face crop fails
 haar_detector = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
 
 
-# =========================
-# MODEL LOADING
-# =========================
+def to_percent(value):
+    return round(float(value) * 100.0, 2)
+
+
+def to_score(value):
+    return round(float(value), 4)
+
+
+def get_confidence_level(confidence):
+    if confidence >= 0.90:
+        return "High"
+    if confidence >= 0.70:
+        return "Medium"
+    return "Low"
+
+
+def make_summary(label, confidence):
+    confidence_percent = to_percent(confidence)
+
+    if confidence < 0.70:
+        return (
+            f"The video shows possible signs of being {label.upper()}, "
+            f"but confidence is low ({confidence_percent}%). "
+            "Manual review is recommended."
+        )
+
+    if confidence < 0.90:
+        return (
+            f"The video is predicted as {label.upper()} with "
+            f"{confidence_percent}% confidence. "
+            "This is a medium-confidence result, so review is recommended."
+        )
+
+    return f"This video is predicted to be {label.upper()} with {confidence_percent}% confidence."
+
+
+def format_feature_score(value):
+    return round(float(value), 3)
+
 
 def load_video_model(model_path=MODEL_PATH):
     checkpoint = torch.load(
         model_path,
         map_location=DEVICE,
-        weights_only=True
+        weights_only=True,
     )
 
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         state_dict = checkpoint["model_state_dict"]
-
-        frames_per_video = 12
+        frames_per_video = 6
         image_size = checkpoint.get("image_size", DEFAULT_IMAGE_SIZE)
         lstm_hidden = checkpoint.get("lstm_hidden", LSTM_HIDDEN)
         lstm_layers = checkpoint.get("lstm_layers", LSTM_LAYERS)
         dropout = checkpoint.get("dropout", DROPOUT)
         extra_feature_dim = checkpoint.get("extra_feature_dim", EXTRA_FEATURE_DIM)
-
     else:
         state_dict = checkpoint
-
         frames_per_video = DEFAULT_FRAMES_PER_VIDEO
         image_size = DEFAULT_IMAGE_SIZE
         lstm_hidden = LSTM_HIDDEN
@@ -108,25 +128,23 @@ def load_video_model(model_path=MODEL_PATH):
     return model, frames_per_video, image_size
 
 
-# =========================
-# FACE CROP / ALIGNMENT
-# =========================
-
-def get_keypts(image_rgb, face):
+def get_keypoints(image_rgb, face):
     shape = face_predictor(image_rgb, face)
 
-    leye = np.array([shape.part(37).x, shape.part(37).y]).reshape(-1, 2)
-    reye = np.array([shape.part(44).x, shape.part(44).y]).reshape(-1, 2)
+    left_eye = np.array([shape.part(37).x, shape.part(37).y]).reshape(-1, 2)
+    right_eye = np.array([shape.part(44).x, shape.part(44).y]).reshape(-1, 2)
     nose = np.array([shape.part(30).x, shape.part(30).y]).reshape(-1, 2)
-    lmouth = np.array([shape.part(49).x, shape.part(49).y]).reshape(-1, 2)
-    rmouth = np.array([shape.part(55).x, shape.part(55).y]).reshape(-1, 2)
+    left_mouth = np.array([shape.part(49).x, shape.part(49).y]).reshape(-1, 2)
+    right_mouth = np.array([shape.part(55).x, shape.part(55).y]).reshape(-1, 2)
 
-    return np.concatenate([leye, reye, nose, lmouth, rmouth], axis=0)
+    return np.concatenate(
+        [left_eye, right_eye, nose, left_mouth, right_mouth],
+        axis=0,
+    )
 
 
 def crop_face_dlib(frame_bgr, res=256):
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
     faces = face_detector(rgb, 0)
 
     if len(faces) == 0:
@@ -135,22 +153,24 @@ def crop_face_dlib(frame_bgr, res=256):
     face = max(faces, key=lambda rect: rect.width() * rect.height())
 
     try:
-        keypoints = get_keypts(rgb, face).astype(np.float32)
+        keypoints = get_keypoints(rgb, face).astype(np.float32)
     except Exception:
         return None
 
     target_size = [112, 112]
 
-    dst = np.array([
-        [30.2946, 51.6963],
-        [65.5318, 51.5014],
-        [48.0252, 71.7366],
-        [33.5493, 92.3655],
-        [62.7299, 92.2041],
-    ], dtype=np.float32)
+    dst = np.array(
+        [
+            [30.2946, 51.6963],
+            [65.5318, 51.5014],
+            [48.0252, 71.7366],
+            [33.5493, 92.3655],
+            [62.7299, 92.2041],
+        ],
+        dtype=np.float32,
+    )
 
     dst[:, 0] += 8.0
-
     dst[:, 0] = dst[:, 0] * res / target_size[0]
     dst[:, 1] = dst[:, 1] * res / target_size[1]
 
@@ -166,18 +186,18 @@ def crop_face_dlib(frame_bgr, res=256):
     dst[:, 0] *= res / (res + 2 * x_margin)
     dst[:, 1] *= res / (res + 2 * y_margin)
 
-    tform = trans.SimilarityTransform()
-    success = tform.estimate(keypoints, dst)
+    try:
+        tform = trans.SimilarityTransform.from_estimate(keypoints, dst)
+    except Exception:
+        return None
 
-    if not success:
+    if tform is None:
         return None
 
     matrix = tform.params[0:2, :]
 
     cropped_rgb = cv2.warpAffine(rgb, matrix, (res, res))
-    cropped_bgr = cv2.cvtColor(cropped_rgb, cv2.COLOR_RGB2BGR)
-
-    return cropped_bgr
+    return cv2.cvtColor(cropped_rgb, cv2.COLOR_RGB2BGR)
 
 
 def crop_face_haar(frame_bgr, res=256):
@@ -221,13 +241,8 @@ def crop_face(frame_bgr, res=256):
     if face is not None:
         return face
 
-    # Final fallback: full frame resized
     return cv2.resize(frame_bgr, (res, res))
 
-
-# =========================
-# VIDEO FRAME EXTRACTION
-# =========================
 
 def sharpness_score(frame_bgr):
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
@@ -236,7 +251,6 @@ def sharpness_score(frame_bgr):
 
 def extract_video_faces(video_path, frames_per_video, image_size):
     video_path = Path(video_path)
-
     cap = cv2.VideoCapture(str(video_path))
 
     if not cap.isOpened():
@@ -271,30 +285,21 @@ def extract_video_faces(video_path, frames_per_video, image_size):
         face = crop_face(frame, res=image_size)
         score = sharpness_score(face)
 
-        candidates.append({
-            "index": int(frame_index),
-            "face": face,
-            "score": score,
-        })
+        candidates.append(
+            {
+                "index": int(frame_index),
+                "face": face,
+                "score": score,
+            }
+        )
 
     cap.release()
 
     if len(candidates) == 0:
         raise RuntimeError(f"No usable frames found in video: {video_path}")
 
-    # Pick the sharpest frames, then sort them back into timeline order
-    candidates = sorted(
-        candidates,
-        key=lambda item: item["score"],
-        reverse=True
-    )
-
-    selected = candidates[:frames_per_video]
-
-    selected = sorted(
-        selected,
-        key=lambda item: item["index"]
-    )
+    candidates = sorted(candidates, key=lambda item: item["score"], reverse=True)
+    selected = sorted(candidates[:frames_per_video], key=lambda item: item["index"])
 
     faces = [item["face"] for item in selected]
 
@@ -304,16 +309,11 @@ def extract_video_faces(video_path, frames_per_video, image_size):
     return faces[:frames_per_video]
 
 
-# =========================
-# LANDMARK FEATURE HELPERS
-# =========================
-
 def get_landmarks_from_pil(image, image_size):
     image = image.resize((image_size, image_size))
     image_np = np.array(image)
 
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-
     faces = face_detector(gray, 0)
 
     if len(faces) == 0:
@@ -322,11 +322,7 @@ def get_landmarks_from_pil(image, image_size):
     face = max(faces, key=lambda rect: rect.width() * rect.height())
     shape = face_predictor(gray, face)
 
-    points = []
-
-    for i in range(shape.num_parts):
-        points.append([shape.part(i).x, shape.part(i).y])
-
+    points = [[shape.part(i).x, shape.part(i).y] for i in range(shape.num_parts)]
     return torch.tensor(points, dtype=torch.float32)
 
 
@@ -351,28 +347,25 @@ def mouth_opening_ratio(mouth_points):
 
 
 def compute_landmark_features(landmarks_list, image_size):
-    valid = [lm for lm in landmarks_list if lm is not None]
+    valid = [landmarks for landmarks in landmarks_list if landmarks is not None]
 
     if len(valid) < 2:
         return torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
 
     landmarks = torch.stack(valid)
 
-    # 1. Mouth/lip landmark movement
     mouth_ratios = []
 
-    for lm in landmarks:
-        if lm.shape[0] > 67:
-            mouth = lm[48:68]
+    for landmarks_item in landmarks:
+        if landmarks_item.shape[0] > 67:
+            mouth = landmarks_item[48:68]
             mouth_ratios.append(mouth_opening_ratio(mouth))
 
     if len(mouth_ratios) >= 2:
-        mouth_ratios = torch.stack(mouth_ratios)
-        mouth_score = mouth_ratios.std()
+        mouth_score = torch.stack(mouth_ratios).std()
     else:
         mouth_score = torch.tensor(0.0)
 
-    # 2. Face landmark motion consistency
     stable_indices = [30, 36, 45, 48, 54]
 
     if landmarks.shape[1] > max(stable_indices):
@@ -380,7 +373,7 @@ def compute_landmark_features(landmarks_list, image_size):
 
         motion = torch.norm(
             stable_points[1:] - stable_points[:-1],
-            dim=2
+            dim=2,
         ).mean(dim=1)
 
         motion = motion / image_size
@@ -393,13 +386,12 @@ def compute_landmark_features(landmarks_list, image_size):
     else:
         face_motion_consistency = torch.tensor(0.0)
 
-    # 3. Eye/blink landmark movement
     eye_ratios = []
 
-    for lm in landmarks:
-        if lm.shape[0] > 47:
-            left_eye = lm[36:42]
-            right_eye = lm[42:48]
+    for landmarks_item in landmarks:
+        if landmarks_item.shape[0] > 47:
+            left_eye = landmarks_item[36:42]
+            right_eye = landmarks_item[42:48]
 
             left_ear = eye_aspect_ratio(left_eye)
             right_ear = eye_aspect_ratio(right_eye)
@@ -407,29 +399,28 @@ def compute_landmark_features(landmarks_list, image_size):
             eye_ratios.append((left_ear + right_ear) / 2.0)
 
     if len(eye_ratios) >= 2:
-        eye_ratios = torch.stack(eye_ratios)
-        eye_score = eye_ratios.std()
+        eye_score = torch.stack(eye_ratios).std()
     else:
         eye_score = torch.tensor(0.0)
 
-    features = torch.stack([
-        mouth_score * 10.0,
-        face_motion_consistency,
-        eye_score * 10.0,
-    ])
+    features = torch.stack(
+        [
+            mouth_score * 10.0,
+            face_motion_consistency,
+            eye_score * 10.0,
+        ]
+    )
 
     return torch.clamp(features, 0.0, 1.0).float()
 
 
-# =========================
-# ARTIFACT FEATURE
-# =========================
-
 def compute_laplacian_variance(gray):
     kernel = torch.tensor(
-        [[0.0, 1.0, 0.0],
-         [1.0, -4.0, 1.0],
-         [0.0, 1.0, 0.0]],
+        [
+            [0.0, 1.0, 0.0],
+            [1.0, -4.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ],
         dtype=gray.dtype,
     ).view(1, 1, 3, 3)
 
@@ -459,41 +450,34 @@ def compute_artifact_feature(raw_frames):
         artifact_score = torch.tensor(0.0)
 
     artifact_score = artifact_score * 100.0
-    artifact_score = torch.clamp(artifact_score, 0.0, 1.0)
-
-    return artifact_score.float()
+    return torch.clamp(artifact_score, 0.0, 1.0).float()
 
 
 def compute_extra_features(raw_frames, landmarks_list, image_size):
     landmark_features = compute_landmark_features(landmarks_list, image_size)
     artifact_feature = compute_artifact_feature(raw_frames).view(1)
 
-    features = torch.cat(
-        [landmark_features, artifact_feature],
-        dim=0
-    )
+    return torch.cat([landmark_features, artifact_feature], dim=0).float()
 
-    return features.float()
-
-
-# =========================
-# PREPARE MODEL INPUT
-# =========================
 
 def prepare_video_tensor(face_frames, image_size):
-    model_tf = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            [0.485, 0.456, 0.406],
-            [0.229, 0.224, 0.225],
-        ),
-    ])
+    model_transform = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                [0.485, 0.456, 0.406],
+                [0.229, 0.224, 0.225],
+            ),
+        ]
+    )
 
-    raw_tf = transforms.Compose([
-        transforms.Resize((image_size, image_size)),
-        transforms.ToTensor(),
-    ])
+    raw_transform = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+        ]
+    )
 
     model_images = []
     raw_images = []
@@ -503,12 +487,10 @@ def prepare_video_tensor(face_frames, image_size):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(frame_rgb)
 
-        landmarks_list.append(
-            get_landmarks_from_pil(image, image_size)
-        )
+        landmarks_list.append(get_landmarks_from_pil(image, image_size))
 
-        model_images.append(model_tf(image))
-        raw_images.append(raw_tf(image))
+        model_images.append(model_transform(image))
+        raw_images.append(raw_transform(image))
 
     images = torch.stack(model_images)
     raw_images = torch.stack(raw_images)
@@ -516,7 +498,7 @@ def prepare_video_tensor(face_frames, image_size):
     extra_features = compute_extra_features(
         raw_images,
         landmarks_list,
-        image_size
+        image_size,
     )
 
     motion = torch.zeros_like(images)
@@ -524,85 +506,10 @@ def prepare_video_tensor(face_frames, image_size):
 
     images = torch.cat([images, motion], dim=1)
 
-    images = images.unsqueeze(0)
-    extra_features = extra_features.unsqueeze(0)
-
-    return images, extra_features
+    return images.unsqueeze(0), extra_features.unsqueeze(0)
 
 
-# =========================
-# PRODUCT OUTPUT HELPERS
-# =========================
-
-def to_percent(value):
-    """
-    Convert probability 0..1 into percentage with 2 decimals.
-    Example:
-        0.9876 -> 98.76
-    """
-    return round(float(value) * 100.0, 2)
-
-
-def to_score(value):
-    """
-    Keep raw probability clean for backend/frontend use.
-    Example:
-        0.987663924 -> 0.9877
-    """
-    return round(float(value), 4)
-
-
-def get_confidence_level(confidence):
-    """
-    Human-friendly confidence level for product display.
-    """
-
-    if confidence >= 0.90:
-        return "High"
-    elif confidence >= 0.70:
-        return "Medium"
-    else:
-        return "Low"
-
-
-def make_summary(label, confidence):
-    confidence_percent = to_percent(confidence)
-
-    if confidence < 0.70:
-        return (
-            f"The video shows possible signs of being {label.upper()}, "
-            f"but confidence is low ({confidence_percent}%). "
-            "Manual review is recommended."
-        )
-
-    if confidence < 0.90:
-        return (
-            f"The video is predicted as {label.upper()} with "
-            f"{confidence_percent}% confidence. "
-            "This is a medium-confidence result, so review is recommended."
-        )
-
-    return (
-        f"This video is predicted to be {label.upper()} "
-        f"with {confidence_percent}% confidence."
-    )
-
-
-def format_feature_score(value):
-    """
-    Format extra feature scores nicely.
-    Values are already clamped between 0 and 1.
-    """
-    return round(float(value), 3)
-
-
-# =========================
-# PREDICTION
-# =========================
-
-def predict_video(video_path, model_path=MODEL_PATH):
-    model, frames_per_video, image_size = load_video_model(model_path)
-
+def predict_video_with_loaded_model(video_path, model, frames_per_video, image_size):
     face_frames = extract_video_faces(
         video_path,
         frames_per_video=frames_per_video,
@@ -618,18 +525,9 @@ def predict_video(video_path, model_path=MODEL_PATH):
     extra_features = extra_features.to(DEVICE)
 
     with torch.no_grad():
-        with torch.amp.autocast(
-            "cuda",
-            enabled=(DEVICE.type == "cuda"),
-        ):
-            spatial_logits, temporal_logits, _ = model(
-                videos,
-                extra_features,
-            )
+        with torch.amp.autocast("cuda", enabled=(DEVICE.type == "cuda")):
+            spatial_logits, temporal_logits, _ = model(videos, extra_features)
 
-            # Training used both heads:
-            # loss = temporal_loss + 0.5 * spatial_loss
-            # So inference should combine them the same way.
             combined_logits = temporal_logits + 0.5 * spatial_logits
 
             temporal_probs = torch.softmax(temporal_logits, dim=1)[0]
@@ -643,29 +541,19 @@ def predict_video(video_path, model_path=MODEL_PATH):
     label = "real" if pred_index == 0 else "fake"
 
     confidence = max(real_prob, fake_prob)
-    confidence_level = get_confidence_level(confidence)
 
-    result = {
-        # Main product result
+    return {
         "prediction": label,
         "label": label,
         "verdict": label.upper(),
-
-        # Clean product display values
         "confidence": to_score(confidence),
         "confidence_percent": to_percent(confidence),
-        "confidence_level": confidence_level,
-
+        "confidence_level": get_confidence_level(confidence),
         "real_probability": to_score(real_prob),
         "fake_probability": to_score(fake_prob),
-
         "real_percent": to_percent(real_prob),
         "fake_percent": to_percent(fake_prob),
-
-        # Helpful display text for frontend
         "summary": make_summary(label, confidence),
-
-        # Model breakdown
         "analysis": {
             "temporal": {
                 "real_probability": to_score(temporal_probs[0]),
@@ -680,15 +568,11 @@ def predict_video(video_path, model_path=MODEL_PATH):
                 "fake_percent": to_percent(spatial_probs[1]),
             },
         },
-
-        # Technical details
         "technical_details": {
             "frames_used": frames_per_video,
             "image_size": image_size,
             "device": str(DEVICE),
         },
-
-        # 4 extra handcrafted video features
         "video_features": {
             "mouth_lip_movement": format_feature_score(extra_features[0, 0].detach().cpu()),
             "face_motion_consistency": format_feature_score(extra_features[0, 1].detach().cpu()),
@@ -697,25 +581,18 @@ def predict_video(video_path, model_path=MODEL_PATH):
         },
     }
 
-    return result
-
-
-# =========================
-# BACKEND COMPATIBILITY WRAPPER
-# =========================
 
 class VideoDetector:
-    """
-    Wrapper class used by main.py.
-    """
-
     def __init__(self, model_path=MODEL_PATH):
         self.model_path = model_path
+        self.model, self.frames_per_video, self.image_size = load_video_model(model_path)
 
     def predict(self, video_path):
-        return predict_video(
+        return predict_video_with_loaded_model(
             video_path=video_path,
-            model_path=self.model_path,
+            model=self.model,
+            frames_per_video=self.frames_per_video,
+            image_size=self.image_size,
         )
 
     def analyze(self, video_path):
