@@ -1,83 +1,35 @@
-# =========================
-# Backend Framework
-# =========================
-
+# Backend framework
 fastapi==0.111.0
 uvicorn==0.30.1
 
-# Handles file uploads in FastAPI
+# File uploads and environment variables
 python-multipart>=0.0.9
-
-# Loads environment variables from .env
 python-dotenv>=1.0.0
 
-
-# =========================
-# Firebase Authentication
-# =========================
-
-# Firebase Admin SDK for token verification
+# Firebase authentication
 firebase-admin>=6.5.0
 
-
-# =========================
-# Machine Learning
-# =========================
-
-# PyTorch deep learning framework
+# Machine learning
 torch>=2.5.0
-
-# TorchVision models and transforms
 torchvision>=0.20.0
-
-# Numerical operations
 numpy>=1.26.0
-
-# Image loading and processing
 Pillow>=10.0.0
 
-# Progress bars during training/testing
+# Training and evaluation
 tqdm>=4.66.0
-
-# Evaluation metrics
 scikit-learn>=1.4.0
 
-
-# =========================
-# Image Processing
-# =========================
-
-# OpenCV for image/video processing
+# Image and video processing
 opencv-python>=4.8.0
-
-# Image utilities and transforms
 scikit-image>=0.24.0
-
-# Face detection and landmarks
 dlib-bin>=20.0.1
 
-
-# =========================
-# Audio Processing
-# =========================
-
-# Audio feature extraction
+# Audio processing
 librosa>=0.10.0
-
-# Audio file reading
 soundfile>=0.12.0
-
-# Fallback audio decoding
 audioread>=3.0.1
 
-
-# =========================
-# Extra Notes
-# =========================
-
-# Install FFmpeg separately for:
-# - .m4a support
-# - video/audio decoding
-#
+# Extra note:
+# Install FFmpeg separately for .m4a and video/audio decoding.
 # Windows:
 # winget install Gyan.FFmpeg
