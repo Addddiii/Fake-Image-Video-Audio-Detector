@@ -19,14 +19,13 @@ from app.routes.auth_routes import router as auth_router
 from app.routes.image_routes import router as image_router
 from app.routes.video_routes import router as video_router
 from app.services.audio_service import set_audio_detector
+from app.services.image_service import set_image_detector
 from app.services.video_service import set_video_detector
 from inference.audio import load_audio_detector
-from inference.image import get_model, initialize_model
+from inference.image import load_image_detector
 from inference.video import load_video_detector
 
-
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 
 app = FastAPI(
     title="Fake Media Detection API",
@@ -50,9 +49,16 @@ app.include_router(audio_router)
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    Initialise Firebase and load all detection models when the API starts.
+    """
     initialize_firebase()
 
-    initialize_model(IMAGE_MODEL_PATH)
+    try:
+        image_detector = load_image_detector(model_path=IMAGE_MODEL_PATH)
+        set_image_detector(image_detector)
+    except Exception:
+        set_image_detector(None)
 
     try:
         video_detector = load_video_detector(model_path=VIDEO_MODEL_PATH)
@@ -69,6 +75,9 @@ async def startup_event():
 
 @app.get("/")
 def read_root():
+    """
+    Basic API status endpoint.
+    """
     return {
         "message": "Fake Media Detection Backend",
         "status": "running",
@@ -77,13 +86,17 @@ def read_root():
 
 @app.get("/health")
 def health_check():
+    """
+    Check whether the API is running and whether each model is loaded.
+    """
     from app.services.audio_service import audio_detector
+    from app.services.image_service import image_detector
     from app.services.video_service import video_detector
 
     return {
         "status": "ok",
         "models": {
-            "image": get_model() is not None,
+            "image": image_detector is not None,
             "video": video_detector is not None,
             "audio": audio_detector is not None,
         },
@@ -93,4 +106,9 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )

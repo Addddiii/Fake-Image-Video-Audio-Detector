@@ -1,14 +1,12 @@
 """
 Train the image deepfake detection model.
+
 Uses EfficientNet-B0 with four handcrafted image features.
 """
 
 from pathlib import Path
 import random
 import sys
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(BASE_DIR))
 
 import cv2
 import dlib
@@ -20,15 +18,16 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
 
-from architectures.image_model import create_fake_detection_model
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
 
+from architectures.image_model import create_fake_detection_model
 
 DATA_DIR = Path(r"D:\images_processed")
 MODEL_DIR = Path(r"D:\images_model")
 
 BEST_PATH = MODEL_DIR / "image_best.pth"
 FINAL_PATH = MODEL_DIR / "image_final.pth"
-
 PREDICTOR_PATH = BASE_DIR / "dlib_tools" / "shape_predictor_81_face_landmarks.dat"
 
 BATCH_SIZE = 64
@@ -44,9 +43,17 @@ EXTRA_FEATURE_DIM = 4
 USE_EXTRA_FEATURES = True
 BALANCE_SPLITS = False
 
+IMAGE_FEATURE_NAMES = [
+    "face_landmark_quality",
+    "face_symmetry_score",
+    "eye_mouth_artifact_score",
+    "texture_frequency_artifact_score",
+]
+
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 random.seed(SEED)
+np.random.seed(SEED)
 torch.manual_seed(SEED)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -62,6 +69,9 @@ face_predictor = dlib.shape_predictor(str(PREDICTOR_PATH))
 
 
 def get_landmarks(image_pil):
+    """
+    Detect the largest face and return its facial landmarks.
+    """
     image = image_pil.resize((IMAGE_SIZE, IMAGE_SIZE))
     image_np = np.array(image)
 
@@ -80,6 +90,9 @@ def get_landmarks(image_pil):
 
 
 def face_landmark_quality(landmarks):
+    """
+    Estimate face quality based on face size and centre position.
+    """
     if landmarks is None or landmarks.shape[0] < 68:
         return torch.tensor(0.0)
 
@@ -111,6 +124,9 @@ def face_landmark_quality(landmarks):
 
 
 def face_symmetry_score(landmarks):
+    """
+    Estimate facial symmetry using eyes, nose, and mouth landmarks.
+    """
     if landmarks is None or landmarks.shape[0] < 68:
         return torch.tensor(0.0)
 
@@ -135,6 +151,9 @@ def face_symmetry_score(landmarks):
 
 
 def eye_mouth_artifact_score(landmarks):
+    """
+    Estimate possible eye and mouth shape artefacts.
+    """
     if landmarks is None or landmarks.shape[0] < 68:
         return torch.tensor(0.0)
 
@@ -163,6 +182,9 @@ def eye_mouth_artifact_score(landmarks):
 
 
 def texture_frequency_artifact_score(image_pil):
+    """
+    Estimate texture artefacts using Laplacian variance.
+    """
     image = image_pil.resize((IMAGE_SIZE, IMAGE_SIZE))
     image_np = np.array(image)
 
@@ -176,6 +198,9 @@ def texture_frequency_artifact_score(image_pil):
 
 
 def compute_image_features(image_pil):
+    """
+    Extract the four handcrafted image features used with the CNN model.
+    """
     landmarks = get_landmarks(image_pil)
 
     features = torch.stack(
@@ -191,11 +216,27 @@ def compute_image_features(image_pil):
 
 
 class ImageDataset(Dataset):
+    """
+    Loads processed image files and returns image tensors, extra features, and labels.
+    """
+
     def __init__(self, split):
         self.split = split
-        self.samples = []
+        self.train_transform, self.eval_transform = self._build_transforms()
+        self.samples = self._load_samples()
 
-        self.train_transform = transforms.Compose(
+        self.real_count = sum(1 for _, label in self.samples if label == 0)
+        self.fake_count = sum(1 for _, label in self.samples if label == 1)
+
+        print(f"{split}: {len(self.samples)} images")
+        print(f"{split}/real after balance: {self.real_count}")
+        print(f"{split}/fake after balance: {self.fake_count}")
+
+    def _build_transforms(self):
+        """
+        Create training and evaluation transforms.
+        """
+        train_transform = transforms.Compose(
             [
                 transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
                 transforms.RandomHorizontalFlip(0.5),
@@ -213,7 +254,7 @@ class ImageDataset(Dataset):
             ]
         )
 
-        self.eval_transform = transforms.Compose(
+        eval_transform = transforms.Compose(
             [
                 transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
                 transforms.ToTensor(),
@@ -224,31 +265,35 @@ class ImageDataset(Dataset):
             ]
         )
 
-        real_samples = []
-        fake_samples = []
+        return train_transform, eval_transform
 
-        for label_name, label in [("real", 0), ("fake", 1)]:
-            folder = DATA_DIR / split / label_name
+    def _collect_label_samples(self, label_name, label):
+        """
+        Collect image paths for one class label.
+        """
+        folder = DATA_DIR / self.split / label_name
 
-            if not folder.exists():
-                raise FileNotFoundError(f"Missing folder: {folder}")
+        if not folder.exists():
+            raise FileNotFoundError(f"Missing folder: {folder}")
 
-            files = (
-                list(folder.glob("*.jpg"))
-                + list(folder.glob("*.jpeg"))
-                + list(folder.glob("*.png"))
-                + list(folder.glob("*.webp"))
-            )
+        files = (
+            list(folder.glob("*.jpg"))
+            + list(folder.glob("*.jpeg"))
+            + list(folder.glob("*.png"))
+            + list(folder.glob("*.webp"))
+        )
 
-            labelled_samples = [(file_path, label) for file_path in files]
+        return [(file_path, label) for file_path in files]
 
-            if label == 0:
-                real_samples.extend(labelled_samples)
-            else:
-                fake_samples.extend(labelled_samples)
+    def _load_samples(self):
+        """
+        Load real and fake image paths for the selected split.
+        """
+        real_samples = self._collect_label_samples("real", 0)
+        fake_samples = self._collect_label_samples("fake", 1)
 
-        print(f"{split}/real before balance: {len(real_samples)}")
-        print(f"{split}/fake before balance: {len(fake_samples)}")
+        print(f"{self.split}/real before balance: {len(real_samples)}")
+        print(f"{self.split}/fake before balance: {len(fake_samples)}")
 
         if BALANCE_SPLITS:
             min_count = min(len(real_samples), len(fake_samples))
@@ -259,15 +304,10 @@ class ImageDataset(Dataset):
             real_samples = real_samples[:min_count]
             fake_samples = fake_samples[:min_count]
 
-        self.samples = real_samples + fake_samples
-        random.shuffle(self.samples)
+        samples = real_samples + fake_samples
+        random.shuffle(samples)
 
-        self.real_count = sum(1 for _, label in self.samples if label == 0)
-        self.fake_count = sum(1 for _, label in self.samples if label == 1)
-
-        print(f"{split}: {len(self.samples)} images")
-        print(f"{split}/real after balance: {self.real_count}")
-        print(f"{split}/fake after balance: {self.fake_count}")
+        return samples
 
     def __len__(self):
         return len(self.samples)
@@ -291,6 +331,9 @@ class ImageDataset(Dataset):
 
 
 def build_model():
+    """
+    Create the EfficientNet-B0 image classification model.
+    """
     return create_fake_detection_model(
         num_classes=2,
         pretrained=True,
@@ -300,16 +343,11 @@ def build_model():
     )
 
 
-def run_epoch(
-    model,
-    loader,
-    loss_fn,
-    optimiser=None,
-    scaler=None,
-    name="Train",
-):
+def run_epoch(model, loader, loss_fn, optimiser=None, scaler=None, name="Train"):
+    """
+    Run one training, validation, or testing epoch.
+    """
     training = optimiser is not None
-
     model.train() if training else model.eval()
 
     loss_sum = 0.0
@@ -321,12 +359,7 @@ def run_epoch(
     fake_correct = 0
     fake_total = 0
 
-    loop = tqdm(
-        loader,
-        desc=name,
-        dynamic_ncols=True,
-        mininterval=1.0,
-    )
+    loop = tqdm(loader, desc=name, dynamic_ncols=True, mininterval=1.0)
 
     for images, extra_features, labels in loop:
         images = images.to(DEVICE, non_blocking=True)
@@ -381,7 +414,63 @@ def run_epoch(
     return epoch_loss, epoch_accuracy, balanced_accuracy, real_accuracy, fake_accuracy
 
 
+def create_checkpoint(model, epoch, best_balanced_accuracy):
+    """
+    Create a checkpoint dictionary containing the model state and metadata.
+    """
+    return {
+        "model_state_dict": model.state_dict(),
+        "epoch": epoch,
+        "best_balanced_acc": best_balanced_accuracy,
+        "model": "efficientnet_b0_rgb_4_static_image_features",
+        "image_size": IMAGE_SIZE,
+        "dropout": 0.4,
+        "extra_feature_dim": EXTRA_FEATURE_DIM,
+        "use_extra_features": USE_EXTRA_FEATURES,
+        "extra_features": IMAGE_FEATURE_NAMES,
+        "classes": ["real", "fake"],
+    }
+
+
+def print_epoch_summary(
+    train_loss,
+    train_acc,
+    train_bal,
+    train_real,
+    train_fake,
+    eval_loss,
+    eval_acc,
+    eval_bal,
+    eval_real,
+    eval_fake,
+    optimiser,
+):
+    """
+    Print training and validation metrics for one epoch.
+    """
+    print(
+        f"\nTrain Loss: {train_loss:.4f} | "
+        f"Acc: {train_acc:.4f} | "
+        f"Bal: {train_bal:.4f} | "
+        f"Real: {train_real:.4f} | "
+        f"Fake: {train_fake:.4f}"
+    )
+
+    print(
+        f"Eval  Loss: {eval_loss:.4f} | "
+        f"Acc: {eval_acc:.4f} | "
+        f"Bal: {eval_bal:.4f} | "
+        f"Real: {eval_real:.4f} | "
+        f"Fake: {eval_fake:.4f}"
+    )
+
+    print(f"LR: {optimiser.param_groups[0]['lr']:.8f}")
+
+
 def main():
+    """
+    Train, validate, test, and save the image detection model.
+    """
     print("Device:", DEVICE)
 
     if DEVICE.type == "cuda":
@@ -405,7 +494,6 @@ def main():
     model = build_model().to(DEVICE)
 
     total_train = train_dataset.real_count + train_dataset.fake_count
-
     real_weight = total_train / max(1, 2 * train_dataset.real_count)
     fake_weight = total_train / max(1, 2 * train_dataset.fake_count)
 
@@ -461,47 +549,27 @@ def main():
 
         scheduler.step(eval_bal)
 
-        print(
-            f"\nTrain Loss: {train_loss:.4f} | "
-            f"Acc: {train_acc:.4f} | "
-            f"Bal: {train_bal:.4f} | "
-            f"Real: {train_real:.4f} | "
-            f"Fake: {train_fake:.4f}"
+        print_epoch_summary(
+            train_loss,
+            train_acc,
+            train_bal,
+            train_real,
+            train_fake,
+            eval_loss,
+            eval_acc,
+            eval_bal,
+            eval_real,
+            eval_fake,
+            optimiser,
         )
-
-        print(
-            f"Eval  Loss: {eval_loss:.4f} | "
-            f"Acc: {eval_acc:.4f} | "
-            f"Bal: {eval_bal:.4f} | "
-            f"Real: {eval_real:.4f} | "
-            f"Fake: {eval_fake:.4f}"
-        )
-
-        print(f"LR: {optimiser.param_groups[0]['lr']:.8f}")
 
         if eval_bal > best_balanced_accuracy:
             best_balanced_accuracy = eval_bal
             wait = 0
 
-            checkpoint = {
-                "model_state_dict": model.state_dict(),
-                "epoch": epoch,
-                "best_balanced_acc": best_balanced_accuracy,
-                "model": "efficientnet_b0_rgb_4_static_image_features",
-                "image_size": IMAGE_SIZE,
-                "dropout": 0.4,
-                "extra_feature_dim": EXTRA_FEATURE_DIM,
-                "use_extra_features": USE_EXTRA_FEATURES,
-                "extra_features": [
-                    "face_landmark_quality",
-                    "face_symmetry_score",
-                    "eye_mouth_artifact_score",
-                    "texture_frequency_artifact_score",
-                ],
-                "classes": ["real", "fake"],
-            }
-
+            checkpoint = create_checkpoint(model, epoch, best_balanced_accuracy)
             torch.save(checkpoint, BEST_PATH)
+
             print(f"Saved best model: {BEST_PATH}")
         else:
             wait += 1
@@ -513,12 +581,7 @@ def main():
 
     print("\n===== TEST =====")
 
-    checkpoint = torch.load(
-        BEST_PATH,
-        map_location=DEVICE,
-        weights_only=True,
-    )
-
+    checkpoint = torch.load(BEST_PATH, map_location=DEVICE, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     test_loss, test_acc, test_bal, test_real, test_fake = run_epoch(

@@ -35,11 +35,11 @@ export default function Home() {
   const tabs: MediaType[] = ['image', 'video', 'audio']
 
   const isValidFile = (file: File, type: MediaType) => {
-  if (type === 'image') return file.type.startsWith('image/')
-  if (type === 'video') return file.type.startsWith('video/')
-  if (type === 'audio') return file.type.startsWith('audio/')
-  return false
-}
+    if (type === 'image') return file.type.startsWith('image/')
+    if (type === 'video') return file.type.startsWith('video/')
+    if (type === 'audio') return file.type.startsWith('audio/')
+    return false
+  }
 
   const acceptMap: Record<MediaType, string> = {
     image: 'image/jpeg,image/png,image/webp',

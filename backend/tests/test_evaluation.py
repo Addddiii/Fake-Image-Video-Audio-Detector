@@ -1,6 +1,9 @@
 """
 Manual model evaluation script.
-Samples 20 real and 20 fake files from each version2 test dataset.
+
+This script samples a fixed number of real and fake files from each test
+dataset, runs the trained image, audio, and video detectors, calculates
+metrics, and saves the results to a CSV file.
 """
 
 import csv
@@ -9,22 +12,18 @@ import sys
 import warnings
 from pathlib import Path
 
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score
-
-from inference.audio import initialize_model as initialize_audio_model
-from inference.audio import predict_audio
-from inference.image import initialize_model as initialize_image_model
-from inference.image import predict_image
+from inference.audio import load_audio_detector
+from inference.image import load_image_detector
 from inference.video import load_video_detector
-
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="PySoundFile failed.*")
 warnings.filterwarnings("ignore", message=".*Trying audioread instead.*")
-
 
 SAMPLES_PER_CLASS = 20
 OUTPUT_CSV = "evaluation_results.csv"
@@ -37,13 +36,15 @@ IMAGE_MODEL_PATH = r"models\image_model.pth"
 AUDIO_MODEL_PATH = r"models\audio_model.pth"
 VIDEO_MODEL_PATH = r"models\video_model.pth"
 
-
-initialize_image_model(IMAGE_MODEL_PATH)
-initialize_audio_model(AUDIO_MODEL_PATH)
+image_detector = load_image_detector(IMAGE_MODEL_PATH)
+audio_detector = load_audio_detector(AUDIO_MODEL_PATH)
 video_detector = load_video_detector(VIDEO_MODEL_PATH)
 
 
 def collect_files(folder, extensions, limit):
+    """
+    Randomly collect a limited number of files from a folder.
+    """
     files = []
 
     for extension in extensions:
@@ -55,6 +56,9 @@ def collect_files(folder, extensions, limit):
 
 
 def normalise_prediction(result):
+    """
+    Convert different prediction output formats into one standard format.
+    """
     if not isinstance(result, dict):
         return "error", 0
 
@@ -88,11 +92,14 @@ def normalise_prediction(result):
 
 
 def run_prediction(media_type, sample_path):
+    """
+    Run the correct detector based on the media type.
+    """
     if media_type == "image":
-        return predict_image(str(sample_path))
+        return image_detector.predict(str(sample_path))
 
     if media_type == "audio":
-        return predict_audio(str(sample_path))
+        return audio_detector.predict(str(sample_path))
 
     if media_type == "video":
         return video_detector.predict(str(sample_path))
@@ -101,6 +108,9 @@ def run_prediction(media_type, sample_path):
 
 
 def test_media_type(media_type, test_path, extensions):
+    """
+    Evaluate one media type using real and fake test samples.
+    """
     rows = []
 
     print(f"\nTesting {media_type.upper()}")
@@ -142,6 +152,9 @@ def test_media_type(media_type, test_path, extensions):
 
 
 def calculate_metrics(rows):
+    """
+    Calculate accuracy, precision, and recall from valid predictions.
+    """
     valid_rows = [
         row
         for row in rows
@@ -153,6 +166,12 @@ def calculate_metrics(rows):
 
     y_true = [row["actual_label"] for row in valid_rows]
     y_pred = [row["predicted_label"] for row in valid_rows]
+
+    correct = sum(
+        1
+        for row in valid_rows
+        if row["actual_label"] == row["predicted_label"]
+    )
 
     return {
         "accuracy": accuracy_score(y_true, y_pred),
@@ -169,15 +188,14 @@ def calculate_metrics(rows):
             zero_division=0,
         ),
         "total": len(valid_rows),
-        "correct": sum(
-            1
-            for row in valid_rows
-            if row["actual_label"] == row["predicted_label"]
-        ),
+        "correct": correct,
     }
 
 
 def print_metrics(name, metrics):
+    """
+    Print evaluation metrics in a readable format.
+    """
     print(f"\n===== {name.upper()} RESULTS =====")
 
     if metrics is None:
@@ -192,6 +210,9 @@ def print_metrics(name, metrics):
 
 
 def save_csv(rows):
+    """
+    Save all evaluation results to a CSV file.
+    """
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
             file,
@@ -211,6 +232,9 @@ def save_csv(rows):
 
 
 def main():
+    """
+    Run evaluation for image, audio, and video models.
+    """
     random.seed(42)
 
     datasets = [

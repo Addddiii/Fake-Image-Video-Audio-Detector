@@ -10,11 +10,13 @@ import firebase_admin
 from firebase_admin import auth, credentials
 from fastapi import Header, HTTPException
 
-
 firebase_initialised = False
 
 
 def get_firebase_credentials_path() -> Optional[Path]:
+    """
+    Find the Firebase credentials file from environment variables or common paths.
+    """
     possible_paths = [
         os.getenv("FIREBASE_CREDENTIALS_PATH"),
         "firebase-credentials.json",
@@ -30,20 +32,23 @@ def get_firebase_credentials_path() -> Optional[Path]:
 
 
 def initialise_firebase() -> None:
+    """
+    Initialise Firebase Admin SDK once using the available credentials file.
+    """
     global firebase_initialised
 
     if firebase_initialised:
         return
 
-    cred_path = get_firebase_credentials_path()
+    credential_path = get_firebase_credentials_path()
 
-    if not cred_path:
+    if credential_path is None:
         return
 
     try:
         if not firebase_admin._apps:
-            cred = credentials.Certificate(str(cred_path))
-            firebase_admin.initialize_app(cred)
+            credential = credentials.Certificate(str(credential_path))
+            firebase_admin.initialize_app(credential)
 
         firebase_initialised = True
 
@@ -55,22 +60,25 @@ initialize_firebase = initialise_firebase
 
 
 async def verify_firebase_token(
-    authorisation: Optional[str] = Header(None, alias="Authorisation"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> dict:
+    """
+    Verify a Firebase ID token from the Authorization header.
+    """
     if not firebase_initialised:
         raise HTTPException(
             status_code=503,
             detail="Firebase is not configured.",
         )
 
-    if not authorisation:
+    if not authorization:
         raise HTTPException(
             status_code=401,
-            detail="Authorisation token missing.",
+            detail="Authorization token missing.",
         )
 
     try:
-        scheme, token = authorisation.split()
+        scheme, token = authorization.split()
 
         if scheme.lower() != "bearer":
             raise ValueError
@@ -78,7 +86,7 @@ async def verify_firebase_token(
     except ValueError:
         raise HTTPException(
             status_code=401,
-            detail="Invalid authorisation header format.",
+            detail="Invalid authorization header format.",
         )
 
     try:
@@ -98,9 +106,12 @@ async def verify_firebase_token(
 
 
 async def get_current_user(
-    authorisation: Optional[str] = Header(None, alias="Authorisation"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> dict:
-    decoded_token = await verify_firebase_token(authorisation)
+    """
+    Return the authenticated user's Firebase profile details.
+    """
+    decoded_token = await verify_firebase_token(authorization)
 
     return {
         "uid": decoded_token.get("uid"),

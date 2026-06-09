@@ -1,6 +1,8 @@
 """
 Preprocess image datasets for image model training.
-Crops faces and saves 224x224 images.
+
+This script loads raw images, detects and crops faces, resizes them to
+224x224, and saves the processed images for model training.
 """
 
 from pathlib import Path
@@ -11,7 +13,6 @@ import dlib
 import numpy as np
 from skimage import transform as trans
 from tqdm import tqdm
-
 
 RAW_DIR = Path(r"D:\images_raw")
 OUTPUT_DIR = Path(r"D:\images_processed")
@@ -36,6 +37,9 @@ haar_detector = cv2.CascadeClassifier(
 
 
 def get_alignment_keypoints(image_rgb, face):
+    """
+    Extract five facial keypoints used for face alignment.
+    """
     shape = face_predictor(image_rgb, face)
 
     left_eye = np.array([shape.part(37).x, shape.part(37).y]).reshape(-1, 2)
@@ -51,6 +55,9 @@ def get_alignment_keypoints(image_rgb, face):
 
 
 def crop_face_dlib(frame_bgr, image_size=IMAGE_SIZE):
+    """
+    Detect, align, and crop the largest face using dlib landmarks.
+    """
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     faces = face_detector(rgb, 0)
 
@@ -82,23 +89,26 @@ def crop_face_dlib(frame_bgr, image_size=IMAGE_SIZE):
     destination[:, 1] = destination[:, 1] * image_size / target_size[1]
 
     try:
-        transform = trans.SimilarityTransform.from_estimate(
+        alignment_transform = trans.SimilarityTransform.from_estimate(
             keypoints,
             destination,
         )
     except Exception:
         return None
 
-    if transform is None:
+    if alignment_transform is None:
         return None
 
-    matrix = transform.params[0:2, :]
+    matrix = alignment_transform.params[0:2, :]
     cropped_rgb = cv2.warpAffine(rgb, matrix, (image_size, image_size))
 
     return cv2.cvtColor(cropped_rgb, cv2.COLOR_RGB2BGR)
 
 
 def crop_face_haar(frame_bgr, image_size=IMAGE_SIZE):
+    """
+    Fallback face crop using OpenCV Haar cascade if dlib detection fails.
+    """
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
     faces = haar_detector.detectMultiScale(
@@ -111,14 +121,13 @@ def crop_face_haar(frame_bgr, image_size=IMAGE_SIZE):
     if len(faces) == 0:
         return None
 
-    x, y, w, h = max(faces, key=lambda box: box[2] * box[3])
-
-    margin = int(0.30 * max(w, h))
+    x, y, width, height = max(faces, key=lambda box: box[2] * box[3])
+    margin = int(0.30 * max(width, height))
 
     x1 = max(0, x - margin)
     y1 = max(0, y - margin)
-    x2 = min(frame_bgr.shape[1], x + w + margin)
-    y2 = min(frame_bgr.shape[0], y + h + margin)
+    x2 = min(frame_bgr.shape[1], x + width + margin)
+    y2 = min(frame_bgr.shape[0], y + height + margin)
 
     face = frame_bgr[y1:y2, x1:x2]
 
@@ -129,6 +138,10 @@ def crop_face_haar(frame_bgr, image_size=IMAGE_SIZE):
 
 
 def crop_face(frame_bgr, image_size=IMAGE_SIZE):
+    """
+    Crop a face using dlib first, then Haar fallback.
+    If no face is found, resize the full image.
+    """
     face = crop_face_dlib(frame_bgr, image_size=image_size)
 
     if face is not None:
@@ -143,22 +156,28 @@ def crop_face(frame_bgr, image_size=IMAGE_SIZE):
 
 
 def collect_images(split, label_name):
+    """
+    Collect all supported image files for a dataset split and class label.
+    """
     folder = RAW_DIR / split / label_name
 
     if not folder.exists():
         print(f"Missing folder: {folder}")
         return []
 
-    images = [
+    image_files = [
         file_path
         for file_path in folder.rglob("*")
         if file_path.is_file() and file_path.suffix.lower() in VALID_EXTENSIONS
     ]
 
-    return sorted(images)
+    return sorted(image_files)
 
 
 def process_split_label(split, label_name):
+    """
+    Process one dataset split and label, then save cropped face images.
+    """
     images = collect_images(split, label_name)
     output_folder = OUTPUT_DIR / split / label_name
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -179,29 +198,44 @@ def process_split_label(split, label_name):
             skipped_count += 1
             continue
 
-        processed = crop_face(frame, image_size=IMAGE_SIZE)
+        processed_image = crop_face(frame, image_size=IMAGE_SIZE)
         output_path = output_folder / image_path.name
 
-        cv2.imwrite(str(output_path), processed)
+        cv2.imwrite(str(output_path), processed_image)
         saved_count += 1
 
     print(f"{split}/{label_name} saved: {saved_count}")
     print(f"{split}/{label_name} skipped: {skipped_count}")
 
 
+def count_processed_files(folder):
+    """
+    Count processed files inside a folder.
+    """
+    if not folder.exists():
+        return 0
+
+    return len([path for path in folder.iterdir() if path.is_file()])
+
+
 def print_final_counts():
+    """
+    Print final processed image counts for each split and class.
+    """
     print("\nFinal processed folder counts:")
 
     for split in ["train", "eval", "test"]:
         for label_name in ["real", "fake"]:
             folder = OUTPUT_DIR / split / label_name
-
-            count = len([path for path in folder.iterdir() if path.is_file()]) if folder.exists() else 0
+            count = count_processed_files(folder)
 
             print(f"{split}/{label_name}: {count}")
 
 
 def main():
+    """
+    Run the full image preprocessing pipeline.
+    """
     if CLEAN_OUTPUT and OUTPUT_DIR.exists():
         print(f"Removing old processed folder: {OUTPUT_DIR}")
         shutil.rmtree(OUTPUT_DIR)

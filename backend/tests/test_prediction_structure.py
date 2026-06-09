@@ -1,4 +1,7 @@
 def test_prediction_result_structure_example():
+    """
+    Check that a prediction result contains the expected response fields.
+    """
     result = {
         "prediction": "real",
         "confidence": 0.95,
@@ -8,6 +11,6 @@ def test_prediction_result_structure_example():
 
     assert isinstance(result, dict)
     assert result["prediction"] in ["real", "fake"]
-    assert "confidence" in result
-    assert "real_percent" in result
-    assert "fake_percent" in result
+    assert isinstance(result["confidence"], float)
+    assert isinstance(result["real_percent"], float)
+    assert isinstance(result["fake_percent"], float)

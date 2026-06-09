@@ -1,12 +1,10 @@
 # Backend framework
 fastapi==0.111.0
 uvicorn==0.30.1
-
-# File uploads and environment variables
 python-multipart>=0.0.9
 python-dotenv>=1.0.0
 
-# Firebase authentication
+# Authentication
 firebase-admin>=6.5.0
 
 # Machine learning
@@ -19,17 +17,12 @@ Pillow>=10.0.0
 tqdm>=4.66.0
 scikit-learn>=1.4.0
 
-# Image and video processing
+# Image, video, and audio processing
 opencv-python>=4.8.0
 scikit-image>=0.24.0
 dlib-bin>=20.0.1
-
-# Audio processing
 librosa>=0.10.0
 soundfile>=0.12.0
 audioread>=3.0.1
 
-# Extra note:
-# Install FFmpeg separately for .m4a and video/audio decoding.
-# Windows:
-# winget install Gyan.FFmpeg
+# Note: FFmpeg must be installed separately for .m4a, video, and audio decoding.

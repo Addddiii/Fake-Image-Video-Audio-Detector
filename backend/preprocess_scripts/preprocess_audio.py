@@ -1,6 +1,9 @@
 """
 Preprocess audio datasets for audio model training.
-Creates log-mel spectrograms and handcrafted audio features.
+
+This script loads raw audio files, converts them into fixed-length log-mel
+spectrograms, extracts handcrafted audio features, and saves the processed
+data as compressed .npz files.
 """
 
 from pathlib import Path
@@ -12,10 +15,8 @@ import librosa
 import numpy as np
 from tqdm import tqdm
 
-
 warnings.filterwarnings("ignore", message="PySoundFile failed.*")
 warnings.filterwarnings("ignore", message=".*Trying audioread instead.*")
-
 
 RAW_DIR = Path(r"D:\audio_raw")
 OUTPUT_DIR = Path(r"D:\audio_processed")
@@ -34,6 +35,10 @@ AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
 
 
 def load_audio(audio_path):
+    """
+    Load an audio file as mono and resize it to a fixed 4-second length.
+    Longer clips are centre-cropped and shorter clips are padded.
+    """
     audio, _ = librosa.load(
         audio_path,
         sr=SAMPLE_RATE,
@@ -59,6 +64,9 @@ def load_audio(audio_path):
 
 
 def create_log_mel(audio):
+    """
+    Convert audio waveform into a normalised log-mel spectrogram.
+    """
     mel = librosa.feature.melspectrogram(
         y=audio,
         sr=SAMPLE_RATE,
@@ -75,6 +83,10 @@ def create_log_mel(audio):
 
 
 def extract_audio_features(audio):
+    """
+    Extract handcrafted features that describe loudness, silence, rhythm,
+    pitch variation, and spectral behaviour.
+    """
     rms = librosa.feature.rms(
         y=audio,
         frame_length=N_FFT,
@@ -112,17 +124,19 @@ def extract_audio_features(audio):
 
     pitch_values = []
 
-    for index in range(pitches.shape[1]):
-        magnitude_column = magnitudes[:, index]
-        pitch_column = pitches[:, index]
+    for frame_index in range(pitches.shape[1]):
+        magnitude_column = magnitudes[:, frame_index]
+        pitch_column = pitches[:, frame_index]
 
         if magnitude_column.max() > 0:
             pitch = pitch_column[magnitude_column.argmax()]
+
             if pitch > 0:
                 pitch_values.append(pitch)
 
     if len(pitch_values) > 1:
         pitch_values = np.array(pitch_values)
+
         pitch_mean = float(np.mean(pitch_values))
         pitch_std = float(np.std(pitch_values))
         pitch_jitter = float(np.mean(np.abs(np.diff(pitch_values))))
@@ -172,6 +186,9 @@ def extract_audio_features(audio):
 
 
 def collect_audio(split, label_name):
+    """
+    Collect all supported audio files for a dataset split and class label.
+    """
     folder = RAW_DIR / split / label_name
 
     if not folder.exists():
@@ -188,6 +205,9 @@ def collect_audio(split, label_name):
 
 
 def process_split_label(split, label_name):
+    """
+    Process one dataset split and label, then save spectrograms and features.
+    """
     audio_files = collect_audio(split, label_name)
     output_folder = OUTPUT_DIR / split / label_name
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -217,7 +237,11 @@ def process_split_label(split, label_name):
                 label=label_name,
             )
 
-            with open(output_folder / f"{output_name}.json", "w", encoding="utf-8") as file:
+            with open(
+                output_folder / f"{output_name}.json",
+                "w",
+                encoding="utf-8",
+            ) as file:
                 json.dump(feature_dict, file, indent=4)
 
             saved_count += 1
@@ -231,29 +255,40 @@ def process_split_label(split, label_name):
     print(f"{split}/{label_name} skipped: {skipped_count}")
 
 
+def count_processed_files(folder):
+    """
+    Count processed .npz files inside a folder.
+    """
+    if not folder.exists():
+        return 0
+
+    return len(
+        [
+            path
+            for path in folder.iterdir()
+            if path.is_file() and path.suffix.lower() == ".npz"
+        ]
+    )
+
+
 def print_final_counts():
+    """
+    Print final processed file counts for each split and class.
+    """
     print("\nFinal processed folder counts:")
 
     for split in ["train", "eval", "test"]:
         for label_name in ["real", "fake"]:
             folder = OUTPUT_DIR / split / label_name
-
-            count = (
-                len(
-                    [
-                        path
-                        for path in folder.iterdir()
-                        if path.is_file() and path.suffix.lower() == ".npz"
-                    ]
-                )
-                if folder.exists()
-                else 0
-            )
+            count = count_processed_files(folder)
 
             print(f"{split}/{label_name}: {count}")
 
 
 def main():
+    """
+    Run the full audio preprocessing pipeline.
+    """
     if CLEAN_OUTPUT and OUTPUT_DIR.exists():
         print(f"Removing old processed folder: {OUTPUT_DIR}")
         shutil.rmtree(OUTPUT_DIR)

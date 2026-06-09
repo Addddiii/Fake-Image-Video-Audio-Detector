@@ -20,7 +20,7 @@ import {
 } from 'recharts'
 
 const BAR_COLORS = ['#3b82f6', '#a78bfa', '#f59e0b']
-const PIE_COLORS = ['#3b82f6', '#a78bfa', '#f59e0b']
+const PIE_COLORS = ['#22c55e', '#ef4444']
 
 const BarTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -164,9 +164,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-
-
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-[#111827]/90 backdrop-blur-sm rounded-2xl border border-white/10 shadow-2xl p-6">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-500 font-semibold mb-1">
@@ -204,7 +201,7 @@ export default function Dashboard() {
               Verdict Breakdown
             </p>
             <p className="text-sm text-slate-400 mb-6">
-              Distribution of authentic, fake, and suspicious results.
+              Distribution of authentic and fake results.
             </p>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
@@ -239,4 +236,3 @@ export default function Dashboard() {
     </main>
   )
 }
-

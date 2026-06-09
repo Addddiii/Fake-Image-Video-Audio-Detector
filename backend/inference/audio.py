@@ -1,13 +1,14 @@
 """
 Audio deepfake detection inference.
+
+This module loads an audio file, converts it into a log-mel spectrogram,
+extracts additional handcrafted audio features, and runs the trained
+EfficientNet-B0 audio detection model.
 """
 
 from pathlib import Path
 from typing import Dict, Optional
-
 import warnings
-warnings.filterwarnings("ignore", message="PySoundFile failed.*")
-warnings.filterwarnings("ignore", message=".*Trying audioread instead.*")
 
 import librosa
 import numpy as np
@@ -17,6 +18,8 @@ from torchvision import transforms
 
 from architectures.audio_model import create_audio_detection_model
 
+warnings.filterwarnings("ignore", message="PySoundFile failed.*")
+warnings.filterwarnings("ignore", message=".*Trying audioread instead.*")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = BASE_DIR / "models" / "audio_model.pth"
@@ -41,14 +44,17 @@ _model_instance = None
 
 
 def to_percent(value):
+    """Convert a probability value into a percentage."""
     return round(float(value) * 100.0, 2)
 
 
 def to_score(value):
+    """Round a probability score for API output."""
     return round(float(value), 4)
 
 
 def get_confidence_level(confidence):
+    """Convert confidence score into a readable confidence level."""
     if confidence >= 0.90:
         return "High"
     if confidence >= 0.70:
@@ -57,6 +63,7 @@ def get_confidence_level(confidence):
 
 
 def make_summary(label, confidence):
+    """Create a user-friendly prediction summary."""
     confidence_percent = to_percent(confidence)
 
     if confidence < 0.70:
@@ -73,14 +80,22 @@ def make_summary(label, confidence):
             "This is a medium-confidence result, so review is recommended."
         )
 
-    return f"This audio is predicted to be {label.upper()} with {confidence_percent}% confidence."
+    return (
+        f"This audio is predicted to be {label.upper()} "
+        f"with {confidence_percent}% confidence."
+    )
 
 
 def format_feature_score(value):
+    """Round extracted audio feature values for the response."""
     return round(float(value), 4)
 
 
 def load_audio(audio_path: str):
+    """
+    Load audio as mono and resize it to a fixed 4-second duration.
+    Longer clips are centre-cropped and shorter clips are padded.
+    """
     y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
 
     if len(y) > FIXED_SAMPLES:
@@ -97,6 +112,10 @@ def load_audio(audio_path: str):
 
 
 def create_log_mel(y):
+    """
+    Convert the waveform into a normalised log-mel spectrogram.
+    The spectrogram is later converted into an image tensor.
+    """
     mel = librosa.feature.melspectrogram(
         y=y,
         sr=SAMPLE_RATE,
@@ -113,6 +132,10 @@ def create_log_mel(y):
 
 
 def extract_audio_features(y):
+    """
+    Extract handcrafted audio features used alongside the CNN model.
+    These features describe loudness, silence, rhythm, pitch, and spectrum.
+    """
     rms = librosa.feature.rms(
         y=y,
         frame_length=N_FFT,
@@ -150,17 +173,19 @@ def extract_audio_features(y):
 
     pitch_values = []
 
-    for i in range(pitches.shape[1]):
-        mag_col = magnitudes[:, i]
-        pitch_col = pitches[:, i]
+    for frame_index in range(pitches.shape[1]):
+        magnitude_column = magnitudes[:, frame_index]
+        pitch_column = pitches[:, frame_index]
 
-        if mag_col.max() > 0:
-            pitch = pitch_col[mag_col.argmax()]
+        if magnitude_column.max() > 0:
+            pitch = pitch_column[magnitude_column.argmax()]
+
             if pitch > 0:
                 pitch_values.append(pitch)
 
     if len(pitch_values) > 1:
         pitch_values = np.array(pitch_values)
+
         pitch_mean = float(np.mean(pitch_values))
         pitch_std = float(np.std(pitch_values))
         pitch_jitter = float(np.mean(np.abs(np.diff(pitch_values))))
@@ -210,6 +235,9 @@ def extract_audio_features(y):
 
 
 def mel_to_image_tensor(log_mel, transform, device):
+    """
+    Convert a log-mel spectrogram into a normalised image tensor.
+    """
     mel = log_mel.astype(np.float32)
 
     mel_min = mel.min()
@@ -224,7 +252,15 @@ def mel_to_image_tensor(log_mel, transform, device):
 
 
 class AudioDeepfakeDetector:
-    def __init__(self, model_path: str = DEFAULT_MODEL_PATH, device: Optional[str] = None):
+    """
+    Handles model loading, audio preprocessing, feature extraction, and prediction.
+    """
+
+    def __init__(
+        self,
+        model_path: str = DEFAULT_MODEL_PATH,
+        device: Optional[str] = None,
+    ):
         self.model_path = str(model_path)
         self.device = torch.device(device) if device else DEVICE
         self.class_names = ["real", "fake"]
@@ -238,6 +274,9 @@ class AudioDeepfakeDetector:
         self._setup_transforms()
 
     def _load_model(self):
+        """
+        Load the trained audio model checkpoint from disk.
+        """
         checkpoint = torch.load(
             self.model_path,
             map_location=self.device,
@@ -248,7 +287,10 @@ class AudioDeepfakeDetector:
             state_dict = checkpoint["model_state_dict"]
             self.image_size = checkpoint.get("image_size", IMAGE_SIZE)
             dropout = checkpoint.get("dropout", 0.4)
-            extra_feature_dim = checkpoint.get("extra_feature_dim", EXTRA_FEATURE_DIM)
+            extra_feature_dim = checkpoint.get(
+                "extra_feature_dim",
+                EXTRA_FEATURE_DIM,
+            )
             self.use_extra_features = checkpoint.get("use_extra_features", True)
         else:
             state_dict = checkpoint
@@ -269,6 +311,9 @@ class AudioDeepfakeDetector:
         self.model.eval()
 
     def _setup_transforms(self):
+        """
+        Prepare image transforms for the spectrogram input.
+        """
         self.transform = transforms.Compose(
             [
                 transforms.Resize((self.image_size, self.image_size)),
@@ -281,6 +326,10 @@ class AudioDeepfakeDetector:
         )
 
     def preprocess_audio(self, audio_path: str):
+        """
+        Convert raw audio into the model inputs:
+        spectrogram tensor, handcrafted feature tensor, and feature dictionary.
+        """
         y = load_audio(audio_path)
         log_mel = create_log_mel(y)
         feature_dict, feature_vector = extract_audio_features(y)
@@ -299,20 +348,25 @@ class AudioDeepfakeDetector:
         return audio_tensor, extra_features, feature_dict
 
     def predict(self, audio_path: str) -> Dict:
+        """
+        Run full audio inference and return prediction details for the API.
+        """
         audio_tensor, extra_features, feature_dict = self.preprocess_audio(audio_path)
 
         with torch.no_grad():
-            with torch.amp.autocast("cuda", enabled=(self.device.type == "cuda")):
+            with torch.amp.autocast(
+                "cuda",
+                enabled=(self.device.type == "cuda"),
+            ):
                 logits = self.model(audio_tensor, extra_features)
-                probs = torch.softmax(logits, dim=1)[0]
+                probabilities = torch.softmax(logits, dim=1)[0]
 
-        real_prob = float(probs[0].detach().cpu())
-        fake_prob = float(probs[1].detach().cpu())
+        real_probability = float(probabilities[0].detach().cpu())
+        fake_probability = float(probabilities[1].detach().cpu())
 
-        pred_index = int(torch.argmax(probs).item())
-        label = self.class_names[pred_index]
-
-        confidence = max(real_prob, fake_prob)
+        predicted_index = int(torch.argmax(probabilities).item())
+        label = self.class_names[predicted_index]
+        confidence = float(probabilities[predicted_index].detach().cpu())
 
         return {
             "prediction": label,
@@ -321,13 +375,13 @@ class AudioDeepfakeDetector:
             "confidence": to_score(confidence),
             "confidence_percent": to_percent(confidence),
             "confidence_level": get_confidence_level(confidence),
-            "real_probability": to_score(real_prob),
-            "fake_probability": to_score(fake_prob),
-            "real_percent": to_percent(real_prob),
-            "fake_percent": to_percent(fake_prob),
+            "real_probability": to_score(real_probability),
+            "fake_probability": to_score(fake_probability),
+            "real_percent": to_percent(real_probability),
+            "fake_percent": to_percent(fake_probability),
             "probabilities": {
-                "real": to_percent(real_prob),
-                "fake": to_percent(fake_prob),
+                "real": to_percent(real_probability),
+                "fake": to_percent(fake_probability),
             },
             "summary": make_summary(label, confidence),
             "technical_details": {
@@ -341,12 +395,18 @@ class AudioDeepfakeDetector:
                 "rms_mean": format_feature_score(feature_dict["rms_mean"]),
                 "rms_std": format_feature_score(feature_dict["rms_std"]),
                 "silence_ratio": format_feature_score(feature_dict["silence_ratio"]),
-                "speech_rate_proxy": format_feature_score(feature_dict["speech_rate_proxy"]),
+                "speech_rate_proxy": format_feature_score(
+                    feature_dict["speech_rate_proxy"]
+                ),
                 "pitch_mean": format_feature_score(feature_dict["pitch_mean"]),
                 "pitch_std": format_feature_score(feature_dict["pitch_std"]),
                 "pitch_jitter": format_feature_score(feature_dict["pitch_jitter"]),
-                "spectral_flatness_mean": format_feature_score(feature_dict["spectral_flatness_mean"]),
-                "spectral_flatness_std": format_feature_score(feature_dict["spectral_flatness_std"]),
+                "spectral_flatness_mean": format_feature_score(
+                    feature_dict["spectral_flatness_mean"]
+                ),
+                "spectral_flatness_std": format_feature_score(
+                    feature_dict["spectral_flatness_std"]
+                ),
                 "centroid_mean": format_feature_score(feature_dict["centroid_mean"]),
                 "centroid_std": format_feature_score(feature_dict["centroid_std"]),
                 "zcr_mean": format_feature_score(feature_dict["zcr_mean"]),
@@ -354,11 +414,11 @@ class AudioDeepfakeDetector:
             },
         }
 
-    def analyze(self, audio_path: str) -> Dict:
-        return self.predict(audio_path)
-
 
 def initialize_model(model_path: str):
+    """
+    Initialise the global audio model instance.
+    """
     global _model_instance
 
     if not Path(model_path).exists():
@@ -373,6 +433,9 @@ def initialize_model(model_path: str):
 
 
 def get_model() -> Optional[AudioDeepfakeDetector]:
+    """
+    Return the currently loaded global audio model instance.
+    """
     return _model_instance
 
 
@@ -380,10 +443,16 @@ def load_audio_detector(
     model_path: str = DEFAULT_MODEL_PATH,
     device: Optional[str] = None,
 ) -> AudioDeepfakeDetector:
+    """
+    Create and return an audio detector instance.
+    """
     return AudioDeepfakeDetector(model_path=model_path, device=device)
 
 
 def predict_audio(audio_path: str) -> Dict:
+    """
+    Predict whether an audio file is real or fake using the global model.
+    """
     if _model_instance is None:
         raise RuntimeError("Audio model is not loaded.")
 

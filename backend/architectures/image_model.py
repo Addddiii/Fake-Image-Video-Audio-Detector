@@ -1,6 +1,8 @@
 """
 Image model architecture.
-EfficientNet-B0 with handcrafted image features.
+
+EfficientNet-B0 is used to classify images, with optional handcrafted
+image features added before the final classification layer.
 """
 
 import torch
@@ -9,6 +11,10 @@ from torchvision import models
 
 
 class ImageClassifier(nn.Module):
+    """
+    EfficientNet-B0 based classifier for real/fake image detection.
+    """
+
     def __init__(
         self,
         num_classes=2,
@@ -22,18 +28,15 @@ class ImageClassifier(nn.Module):
         self.use_extra_features = use_extra_features
         self.extra_feature_dim = extra_feature_dim
 
-        if pretrained:
-            weights = models.EfficientNet_B0_Weights.DEFAULT
-            efficientnet = models.efficientnet_b0(weights=weights)
-        else:
-            efficientnet = models.efficientnet_b0(weights=None)
+        weights = models.EfficientNet_B0_Weights.DEFAULT if pretrained else None
+        efficientnet = models.efficientnet_b0(weights=weights)
 
         self.features = efficientnet.features
         self.avgpool = efficientnet.avgpool
 
         image_feature_dim = efficientnet.classifier[1].in_features
 
-        if self.use_extra_features:
+        if use_extra_features:
             self.extra_encoder = nn.Sequential(
                 nn.Linear(extra_feature_dim, 32),
                 nn.ReLU(inplace=True),
@@ -41,7 +44,6 @@ class ImageClassifier(nn.Module):
                 nn.Linear(32, 32),
                 nn.ReLU(inplace=True),
             )
-
             classifier_input_dim = image_feature_dim + 32
         else:
             self.extra_encoder = None
@@ -53,6 +55,9 @@ class ImageClassifier(nn.Module):
         )
 
     def forward(self, x, extra_features=None):
+        """
+        Run the image and optional handcrafted features through the model.
+        """
         batch_size = x.size(0)
 
         x = self.features(x)
@@ -68,12 +73,9 @@ class ImageClassifier(nn.Module):
                     dtype=x.dtype,
                 )
 
-            extra_features = extra_features.to(
-                device=x.device,
-                dtype=x.dtype,
-            )
-
+            extra_features = extra_features.to(device=x.device, dtype=x.dtype)
             extra_encoded = self.extra_encoder(extra_features)
+
             x = torch.cat([x, extra_encoded], dim=1)
 
         return self.classifier(x)
@@ -86,6 +88,9 @@ def create_fake_detection_model(
     extra_feature_dim=4,
     use_extra_features=True,
 ):
+    """
+    Create and return the image detection model.
+    """
     return ImageClassifier(
         num_classes=num_classes,
         dropout=dropout,

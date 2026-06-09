@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, Header
 
 from app.auth import get_current_user, verify_firebase_token
 
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 @router.post("/verify")
 async def verify_login(authorization: Optional[str] = Header(None)):
+    """
+    Verify the Firebase login token sent in the Authorization header.
+    """
     decoded_token = await verify_firebase_token(authorization)
 
     return {
@@ -24,4 +26,7 @@ async def verify_login(authorization: Optional[str] = Header(None)):
 
 @router.get("/me")
 async def get_my_info(user: dict = Depends(get_current_user)):
+    """
+    Return the currently authenticated user's details.
+    """
     return {"user": user}

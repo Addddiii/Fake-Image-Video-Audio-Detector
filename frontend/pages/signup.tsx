@@ -5,7 +5,7 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
-  updateProfile
+  updateProfile,
 } from 'firebase/auth'
 import Navbar from '@/components/Navbar'
 import { auth, hasFirebaseConfig } from '@/utils/firebase'

@@ -1,6 +1,8 @@
 """
 Precompute handcrafted video features for video model training.
-Creates one cached feature vector per processed video folder.
+
+This script reads processed video frame folders, extracts motion and facial
+landmark features, and stores one cached feature vector per video.
 """
 
 from pathlib import Path
@@ -12,7 +14,6 @@ import torch
 from PIL import Image
 from torchvision import transforms
 from tqdm import tqdm
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -42,6 +43,10 @@ raw_transform = transforms.Compose(
 
 
 def select_frames(frames):
+    """
+    Select exactly FRAMES_PER_VIDEO frames from a video folder.
+    Short videos are padded by repeating the final frame.
+    """
     frames = list(frames)
 
     if len(frames) >= FRAMES_PER_VIDEO:
@@ -53,15 +58,18 @@ def select_frames(frames):
 
         return [frames[index] for index in indexes]
 
-    padded = frames[:]
+    padded_frames = frames[:]
 
-    while len(padded) < FRAMES_PER_VIDEO:
-        padded.append(frames[-1])
+    while len(padded_frames) < FRAMES_PER_VIDEO:
+        padded_frames.append(frames[-1])
 
-    return padded
+    return padded_frames
 
 
 def get_landmarks_from_pil(image):
+    """
+    Detect the largest face in a frame and return its facial landmarks.
+    """
     image = image.resize((IMAGE_SIZE, IMAGE_SIZE))
     image_np = np.array(image)
 
@@ -74,12 +82,18 @@ def get_landmarks_from_pil(image):
     face = max(faces, key=lambda rect: rect.width() * rect.height())
     shape = face_predictor(gray, face)
 
-    points = [[shape.part(index).x, shape.part(index).y] for index in range(shape.num_parts)]
+    points = [
+        [shape.part(index).x, shape.part(index).y]
+        for index in range(shape.num_parts)
+    ]
 
     return torch.tensor(points, dtype=torch.float32)
 
 
 def eye_aspect_ratio(eye_points):
+    """
+    Calculate eye aspect ratio for blink movement estimation.
+    """
     vertical_1 = torch.dist(eye_points[1], eye_points[5])
     vertical_2 = torch.dist(eye_points[2], eye_points[4])
     horizontal = torch.dist(eye_points[0], eye_points[3])
@@ -88,6 +102,9 @@ def eye_aspect_ratio(eye_points):
 
 
 def mouth_opening_ratio(mouth_points):
+    """
+    Calculate mouth opening ratio for lip movement estimation.
+    """
     left = mouth_points[0]
     right = mouth_points[6]
     top = mouth_points[3]
@@ -100,7 +117,14 @@ def mouth_opening_ratio(mouth_points):
 
 
 def compute_landmark_features(landmarks_list):
-    valid_landmarks = [landmarks for landmarks in landmarks_list if landmarks is not None]
+    """
+    Compute mouth movement, face motion consistency, and eye movement features.
+    """
+    valid_landmarks = [
+        landmarks
+        for landmarks in landmarks_list
+        if landmarks is not None
+    ]
 
     if len(valid_landmarks) < 2:
         return torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
@@ -114,10 +138,11 @@ def compute_landmark_features(landmarks_list):
             mouth = landmark_item[48:68]
             mouth_ratios.append(mouth_opening_ratio(mouth))
 
-    if len(mouth_ratios) >= 2:
-        mouth_score = torch.stack(mouth_ratios).std()
-    else:
-        mouth_score = torch.tensor(0.0)
+    mouth_score = (
+        torch.stack(mouth_ratios).std()
+        if len(mouth_ratios) >= 2
+        else torch.tensor(0.0)
+    )
 
     stable_indices = [30, 36, 45, 48, 54]
 
@@ -151,10 +176,11 @@ def compute_landmark_features(landmarks_list):
 
             eye_ratios.append((left_ear + right_ear) / 2.0)
 
-    if len(eye_ratios) >= 2:
-        eye_score = torch.stack(eye_ratios).std()
-    else:
-        eye_score = torch.tensor(0.0)
+    eye_score = (
+        torch.stack(eye_ratios).std()
+        if len(eye_ratios) >= 2
+        else torch.tensor(0.0)
+    )
 
     features = torch.stack(
         [
@@ -168,6 +194,9 @@ def compute_landmark_features(landmarks_list):
 
 
 def compute_laplacian_variance(gray):
+    """
+    Compute Laplacian variance using PyTorch.
+    """
     kernel = torch.tensor(
         [
             [0.0, 1.0, 0.0],
@@ -189,6 +218,9 @@ def compute_laplacian_variance(gray):
 
 
 def compute_artifact_feature(raw_frames):
+    """
+    Measure frame-to-frame texture or compression inconsistency.
+    """
     sharpness_values = []
 
     for frame in raw_frames:
@@ -197,10 +229,11 @@ def compute_artifact_feature(raw_frames):
 
     sharpness_values = torch.stack(sharpness_values)
 
-    if sharpness_values.numel() >= 2:
-        artifact_score = sharpness_values.std()
-    else:
-        artifact_score = torch.tensor(0.0)
+    artifact_score = (
+        sharpness_values.std()
+        if sharpness_values.numel() >= 2
+        else torch.tensor(0.0)
+    )
 
     artifact_score = artifact_score * 100.0
 
@@ -208,6 +241,9 @@ def compute_artifact_feature(raw_frames):
 
 
 def compute_features_for_video(frame_paths):
+    """
+    Compute the four handcrafted feature values for one processed video.
+    """
     selected_frames = select_frames(frame_paths)
 
     raw_images = []
@@ -227,7 +263,21 @@ def compute_features_for_video(frame_paths):
     return torch.cat([landmark_features, artifact_feature], dim=0).float()
 
 
+def collect_frame_paths(video_folder):
+    """
+    Collect frame image paths from one processed video folder.
+    """
+    return [
+        file_path
+        for file_path in sorted(video_folder.iterdir())
+        if file_path.is_file() and file_path.suffix.lower() in FRAME_EXTENSIONS
+    ]
+
+
 def collect_video_samples():
+    """
+    Collect valid processed video folders from all dataset splits.
+    """
     samples = []
 
     for split in ["train", "eval", "test"]:
@@ -242,11 +292,7 @@ def collect_video_samples():
                 if not video_folder.is_dir():
                     continue
 
-                frames = [
-                    file_path
-                    for file_path in sorted(video_folder.iterdir())
-                    if file_path.is_file() and file_path.suffix.lower() in FRAME_EXTENSIONS
-                ]
+                frames = collect_frame_paths(video_folder)
 
                 if len(frames) >= MIN_FRAMES_REQUIRED:
                     key = f"{split}/{label_name}/{video_folder.name}"
@@ -256,6 +302,9 @@ def collect_video_samples():
 
 
 def main():
+    """
+    Precompute and save all video feature vectors.
+    """
     feature_cache = {}
     samples = collect_video_samples()
 

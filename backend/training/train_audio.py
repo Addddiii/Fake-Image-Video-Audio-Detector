@@ -1,14 +1,12 @@
 """
 Train the audio deepfake detection model.
+
 Uses EfficientNet-B0 with log-mel spectrograms and 13 handcrafted audio features.
 """
 
 from pathlib import Path
 import random
 import sys
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-sys.path.append(str(BASE_DIR))
 
 import numpy as np
 import torch
@@ -18,8 +16,10 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
 
-from architectures.audio_model import create_audio_detection_model
+BASE_DIR = Path(__file__).resolve().parents[1]
+sys.path.append(str(BASE_DIR))
 
+from architectures.audio_model import create_audio_detection_model
 
 DATA_DIR = Path(r"D:\audio_processed")
 MODEL_DIR = Path(r"D:\audio_model")
@@ -40,6 +40,22 @@ EXTRA_FEATURE_DIM = 13
 USE_EXTRA_FEATURES = True
 BALANCE_SPLITS = False
 
+AUDIO_FEATURE_NAMES = [
+    "rms_mean",
+    "rms_std",
+    "silence_ratio",
+    "speech_rate_proxy",
+    "pitch_mean",
+    "pitch_std",
+    "pitch_jitter",
+    "spectral_flatness_mean",
+    "spectral_flatness_std",
+    "centroid_mean",
+    "centroid_std",
+    "zcr_mean",
+    "zcr_std",
+]
+
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 random.seed(SEED)
@@ -53,10 +69,28 @@ if DEVICE.type == "cuda":
 
 
 class AudioDataset(Dataset):
+    """
+    Loads processed audio samples saved as .npz files.
+    Each sample contains a log-mel spectrogram, handcrafted features, and a label.
+    """
+
     def __init__(self, split):
         self.split = split
+        self.train_transform, self.eval_transform = self._build_transforms()
+        self.samples = self._load_samples()
 
-        self.train_transform = transforms.Compose(
+        self.real_count = sum(1 for _, label in self.samples if label == 0)
+        self.fake_count = sum(1 for _, label in self.samples if label == 1)
+
+        print(f"{split}: {len(self.samples)} audio files")
+        print(f"{split}/real after balance: {self.real_count}")
+        print(f"{split}/fake after balance: {self.fake_count}")
+
+    def _build_transforms(self):
+        """
+        Create image transforms for spectrogram inputs.
+        """
+        train_transform = transforms.Compose(
             [
                 transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
                 transforms.RandomHorizontalFlip(0.5),
@@ -68,7 +102,7 @@ class AudioDataset(Dataset):
             ]
         )
 
-        self.eval_transform = transforms.Compose(
+        eval_transform = transforms.Compose(
             [
                 transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
                 transforms.ToTensor(),
@@ -79,25 +113,17 @@ class AudioDataset(Dataset):
             ]
         )
 
-        real_samples = []
-        fake_samples = []
+        return train_transform, eval_transform
 
-        for label_name, label in [("real", 0), ("fake", 1)]:
-            folder = DATA_DIR / split / label_name
+    def _load_samples(self):
+        """
+        Load real and fake sample paths for the selected split.
+        """
+        real_samples = self._collect_label_samples("real", 0)
+        fake_samples = self._collect_label_samples("fake", 1)
 
-            if not folder.exists():
-                raise FileNotFoundError(f"Missing folder: {folder}")
-
-            files = sorted(folder.glob("*.npz"))
-            labelled_samples = [(file_path, label) for file_path in files]
-
-            if label == 0:
-                real_samples.extend(labelled_samples)
-            else:
-                fake_samples.extend(labelled_samples)
-
-        print(f"{split}/real before balance: {len(real_samples)}")
-        print(f"{split}/fake before balance: {len(fake_samples)}")
+        print(f"{self.split}/real before balance: {len(real_samples)}")
+        print(f"{self.split}/fake before balance: {len(fake_samples)}")
 
         if BALANCE_SPLITS:
             min_count = min(len(real_samples), len(fake_samples))
@@ -108,20 +134,31 @@ class AudioDataset(Dataset):
             real_samples = real_samples[:min_count]
             fake_samples = fake_samples[:min_count]
 
-        self.samples = real_samples + fake_samples
-        random.shuffle(self.samples)
+        samples = real_samples + fake_samples
+        random.shuffle(samples)
 
-        self.real_count = sum(1 for _, label in self.samples if label == 0)
-        self.fake_count = sum(1 for _, label in self.samples if label == 1)
+        return samples
 
-        print(f"{split}: {len(self.samples)} audio files")
-        print(f"{split}/real after balance: {self.real_count}")
-        print(f"{split}/fake after balance: {self.fake_count}")
+    def _collect_label_samples(self, label_name, label):
+        """
+        Collect processed .npz files for one label.
+        """
+        folder = DATA_DIR / self.split / label_name
+
+        if not folder.exists():
+            raise FileNotFoundError(f"Missing folder: {folder}")
+
+        files = sorted(folder.glob("*.npz"))
+
+        return [(file_path, label) for file_path in files]
 
     def __len__(self):
         return len(self.samples)
 
     def mel_to_image(self, mel):
+        """
+        Convert a log-mel spectrogram array into an RGB image.
+        """
         mel = mel.astype(np.float32)
 
         mel_min = mel.min()
@@ -155,6 +192,9 @@ class AudioDataset(Dataset):
 
 
 def build_model():
+    """
+    Create the EfficientNet-B0 audio classification model.
+    """
     return create_audio_detection_model(
         num_classes=2,
         pretrained=True,
@@ -164,16 +204,11 @@ def build_model():
     )
 
 
-def run_epoch(
-    model,
-    loader,
-    loss_fn,
-    optimiser=None,
-    scaler=None,
-    name="Train",
-):
+def run_epoch(model, loader, loss_fn, optimiser=None, scaler=None, name="Train"):
+    """
+    Run one training, validation, or testing epoch.
+    """
     training = optimiser is not None
-
     model.train() if training else model.eval()
 
     loss_sum = 0.0
@@ -185,12 +220,7 @@ def run_epoch(
     fake_correct = 0
     fake_total = 0
 
-    loop = tqdm(
-        loader,
-        desc=name,
-        dynamic_ncols=True,
-        mininterval=1.0,
-    )
+    loop = tqdm(loader, desc=name, dynamic_ncols=True, mininterval=1.0)
 
     for audio_images, extra_features, labels in loop:
         audio_images = audio_images.to(DEVICE, non_blocking=True)
@@ -245,7 +275,63 @@ def run_epoch(
     return epoch_loss, epoch_accuracy, balanced_accuracy, real_accuracy, fake_accuracy
 
 
+def create_checkpoint(model, epoch, best_balanced_accuracy):
+    """
+    Create a checkpoint dictionary containing the model state and metadata.
+    """
+    return {
+        "model_state_dict": model.state_dict(),
+        "epoch": epoch,
+        "best_balanced_acc": best_balanced_accuracy,
+        "model": "efficientnet_b0_audio_13_features",
+        "image_size": IMAGE_SIZE,
+        "dropout": 0.4,
+        "extra_feature_dim": EXTRA_FEATURE_DIM,
+        "use_extra_features": USE_EXTRA_FEATURES,
+        "extra_features": AUDIO_FEATURE_NAMES,
+        "classes": ["real", "fake"],
+    }
+
+
+def print_epoch_summary(
+    train_loss,
+    train_acc,
+    train_bal,
+    train_real,
+    train_fake,
+    eval_loss,
+    eval_acc,
+    eval_bal,
+    eval_real,
+    eval_fake,
+    optimiser,
+):
+    """
+    Print training and validation metrics for one epoch.
+    """
+    print(
+        f"\nTrain Loss: {train_loss:.4f} | "
+        f"Acc: {train_acc:.4f} | "
+        f"Bal: {train_bal:.4f} | "
+        f"Real: {train_real:.4f} | "
+        f"Fake: {train_fake:.4f}"
+    )
+
+    print(
+        f"Eval  Loss: {eval_loss:.4f} | "
+        f"Acc: {eval_acc:.4f} | "
+        f"Bal: {eval_bal:.4f} | "
+        f"Real: {eval_real:.4f} | "
+        f"Fake: {eval_fake:.4f}"
+    )
+
+    print(f"LR: {optimiser.param_groups[0]['lr']:.8f}")
+
+
 def main():
+    """
+    Train, validate, test, and save the audio detection model.
+    """
     print("Device:", DEVICE)
 
     if DEVICE.type == "cuda":
@@ -269,7 +355,6 @@ def main():
     model = build_model().to(DEVICE)
 
     total_train = train_dataset.real_count + train_dataset.fake_count
-
     real_weight = total_train / max(1, 2 * train_dataset.real_count)
     fake_weight = total_train / max(1, 2 * train_dataset.fake_count)
 
@@ -325,56 +410,27 @@ def main():
 
         scheduler.step(eval_bal)
 
-        print(
-            f"\nTrain Loss: {train_loss:.4f} | "
-            f"Acc: {train_acc:.4f} | "
-            f"Bal: {train_bal:.4f} | "
-            f"Real: {train_real:.4f} | "
-            f"Fake: {train_fake:.4f}"
+        print_epoch_summary(
+            train_loss,
+            train_acc,
+            train_bal,
+            train_real,
+            train_fake,
+            eval_loss,
+            eval_acc,
+            eval_bal,
+            eval_real,
+            eval_fake,
+            optimiser,
         )
-
-        print(
-            f"Eval  Loss: {eval_loss:.4f} | "
-            f"Acc: {eval_acc:.4f} | "
-            f"Bal: {eval_bal:.4f} | "
-            f"Real: {eval_real:.4f} | "
-            f"Fake: {eval_fake:.4f}"
-        )
-
-        print(f"LR: {optimiser.param_groups[0]['lr']:.8f}")
 
         if eval_bal > best_balanced_accuracy:
             best_balanced_accuracy = eval_bal
             wait = 0
 
-            checkpoint = {
-                "model_state_dict": model.state_dict(),
-                "epoch": epoch,
-                "best_balanced_acc": best_balanced_accuracy,
-                "model": "efficientnet_b0_audio_13_features",
-                "image_size": IMAGE_SIZE,
-                "dropout": 0.4,
-                "extra_feature_dim": EXTRA_FEATURE_DIM,
-                "use_extra_features": USE_EXTRA_FEATURES,
-                "extra_features": [
-                    "rms_mean",
-                    "rms_std",
-                    "silence_ratio",
-                    "speech_rate_proxy",
-                    "pitch_mean",
-                    "pitch_std",
-                    "pitch_jitter",
-                    "spectral_flatness_mean",
-                    "spectral_flatness_std",
-                    "centroid_mean",
-                    "centroid_std",
-                    "zcr_mean",
-                    "zcr_std",
-                ],
-                "classes": ["real", "fake"],
-            }
-
+            checkpoint = create_checkpoint(model, epoch, best_balanced_accuracy)
             torch.save(checkpoint, BEST_PATH)
+
             print(f"Saved best model: {BEST_PATH}")
         else:
             wait += 1
@@ -386,12 +442,7 @@ def main():
 
     print("\n===== TEST =====")
 
-    checkpoint = torch.load(
-        BEST_PATH,
-        map_location=DEVICE,
-        weights_only=True,
-    )
-
+    checkpoint = torch.load(BEST_PATH, map_location=DEVICE, weights_only=True)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     test_loss, test_acc, test_bal, test_real, test_fake = run_epoch(

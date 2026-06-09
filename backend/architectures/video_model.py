@@ -1,6 +1,8 @@
 """
 Video model architecture.
-Uses EfficientNet-B0, motion channels, BiLSTM, and video features.
+
+Uses EfficientNet-B0 to extract frame features and a BiLSTM to learn
+temporal patterns across video frames.
 """
 
 import torch
@@ -9,6 +11,9 @@ from torchvision import models
 
 
 def adapt_efficientnet_input_channels(model: nn.Module, in_channels: int) -> nn.Module:
+    """
+    Modify EfficientNet-B0 so it can accept extra input channels if needed.
+    """
     if in_channels == 3:
         return model
 
@@ -43,29 +48,32 @@ def adapt_efficientnet_input_channels(model: nn.Module, in_channels: int) -> nn.
 
 
 class VideoClassifier(nn.Module):
+    """
+    Simple EfficientNet-B0 video classifier using average frame predictions.
+    """
+
     def __init__(self, num_classes=2, dropout=0.3, in_channels=3):
         super().__init__()
 
         efficientnet = models.efficientnet_b0(
             weights=models.EfficientNet_B0_Weights.DEFAULT,
         )
-
-        efficientnet = adapt_efficientnet_input_channels(
-            efficientnet,
-            in_channels,
-        )
+        efficientnet = adapt_efficientnet_input_channels(efficientnet, in_channels)
 
         self.features = efficientnet.features
         self.avgpool = efficientnet.avgpool
 
-        in_features = efficientnet.classifier[1].in_features
+        feature_dim = efficientnet.classifier[1].in_features
 
         self.classifier = nn.Sequential(
             nn.Dropout(p=dropout, inplace=True),
-            nn.Linear(in_features, num_classes),
+            nn.Linear(feature_dim, num_classes),
         )
 
     def forward(self, x):
+        """
+        Classify each frame and average the predictions across the video.
+        """
         batch_size, num_frames, channels, height, width = x.shape
 
         x = x.view(batch_size * num_frames, channels, height, width)
@@ -81,6 +89,10 @@ class VideoClassifier(nn.Module):
 
 
 class VideoClassifierLSTM(nn.Module):
+    """
+    EfficientNet-B0 + BiLSTM classifier for real/fake video detection.
+    """
+
     def __init__(
         self,
         num_classes=2,
@@ -99,11 +111,7 @@ class VideoClassifierLSTM(nn.Module):
         efficientnet = models.efficientnet_b0(
             weights=models.EfficientNet_B0_Weights.DEFAULT,
         )
-
-        efficientnet = adapt_efficientnet_input_channels(
-            efficientnet,
-            in_channels,
-        )
+        efficientnet = adapt_efficientnet_input_channels(efficientnet, in_channels)
 
         self.features = efficientnet.features
         self.avgpool = efficientnet.avgpool
@@ -126,7 +134,7 @@ class VideoClassifierLSTM(nn.Module):
 
         lstm_output_dim = lstm_hidden * 2
 
-        if self.use_extra_features:
+        if use_extra_features:
             self.extra_encoder = nn.Sequential(
                 nn.Linear(extra_feature_dim, 32),
                 nn.ReLU(inplace=True),
@@ -134,7 +142,6 @@ class VideoClassifierLSTM(nn.Module):
                 nn.Linear(32, 32),
                 nn.ReLU(inplace=True),
             )
-
             temporal_input_dim = lstm_output_dim + 32
         else:
             self.extra_encoder = None
@@ -146,23 +153,26 @@ class VideoClassifierLSTM(nn.Module):
         )
 
     def forward(self, x, extra_features=None):
+        """
+        Return spatial, temporal, and per-frame predictions for the video.
+        """
         batch_size, num_frames, channels, height, width = x.shape
 
         x_flat = x.view(batch_size * num_frames, channels, height, width)
 
-        features = self.features(x_flat)
-        features = self.avgpool(features)
-        features = torch.flatten(features, 1)
+        frame_features = self.features(x_flat)
+        frame_features = self.avgpool(frame_features)
+        frame_features = torch.flatten(frame_features, 1)
 
-        per_frame_logits = self.frame_classifier(features)
+        per_frame_logits = self.frame_classifier(frame_features)
         per_frame_logits = per_frame_logits.view(batch_size, num_frames, -1)
 
         spatial_logits = per_frame_logits.mean(dim=1)
 
-        sequence_features = features.view(batch_size, num_frames, -1)
+        sequence_features = frame_features.view(batch_size, num_frames, -1)
 
         lstm_output, _ = self.lstm(sequence_features)
-        temporal_pooled = lstm_output.mean(dim=1)
+        temporal_features = lstm_output.mean(dim=1)
 
         if self.use_extra_features:
             if extra_features is None:
@@ -173,14 +183,11 @@ class VideoClassifierLSTM(nn.Module):
                     dtype=x.dtype,
                 )
 
-            extra_features = extra_features.to(
-                device=x.device,
-                dtype=x.dtype,
-            )
-
+            extra_features = extra_features.to(device=x.device, dtype=x.dtype)
             extra_encoded = self.extra_encoder(extra_features)
-            temporal_pooled = torch.cat([temporal_pooled, extra_encoded], dim=1)
 
-        temporal_logits = self.temporal_classifier(temporal_pooled)
+            temporal_features = torch.cat([temporal_features, extra_encoded], dim=1)
+
+        temporal_logits = self.temporal_classifier(temporal_features)
 
         return spatial_logits, temporal_logits, per_frame_logits
