@@ -24,9 +24,9 @@ Vic Ciesielski
 
 ## Project Overview
 
-This project is a full-stack web application designed to detect whether media content (images, videos, or audio files) is real or AI-generated.
+This project is a full-stack web application designed to detect whether media content (images, videos, or audio files) is authentic or AI-generated.
 
-The system combines deep learning models with a modern web interface to provide fast, accessible, and user-friendly detection of synthetic media. Users can upload media files and receive a prediction, confidence score, and probability breakdown indicating whether the content is authentic or AI-generated.
+The system combines deep learning models with a modern web interface to provide fast and accessible detection of synthetic media. Users can upload media files and receive a prediction, confidence score, and probability breakdown indicating whether the content is real or AI-generated.
 
 ---
 
@@ -47,8 +47,8 @@ The system combines deep learning models with a modern web interface to provide 
 
 ```text
 Fake-Image-Video-Audio-Detector/
-├── backend/          # FastAPI backend
-├── frontend/         # Next.js frontend
+├── backend/
+├── frontend/
 ├── README.md
 └── .gitignore
 ```
@@ -64,12 +64,12 @@ Fake-Image-Video-Audio-Detector/
 
 ### Frontend
 
-* Node.js (v18+ recommended)
+* Node.js 18+
 * npm
 
 ---
 
-## Setup Instructions
+## Installation Instructions
 
 ### Clone Repository
 
@@ -78,20 +78,28 @@ git clone https://github.com/Addddiii/Fake-Image-Video-Audio-Detector.git
 cd Fake-Image-Video-Audio-Detector
 ```
 
----
-
-## Backend Setup
-
-Install backend dependencies:
+### Backend Installation
 
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
 
-Run the backend:
+### Frontend Installation
 
 ```bash
+cd frontend
+npm install
+```
+
+---
+
+## Running Instructions
+
+### Start Backend
+
+```bash
+cd backend
 py -3.12 -m uvicorn app.main:app --reload
 ```
 
@@ -101,20 +109,10 @@ Backend URL:
 http://localhost:8000
 ```
 
----
-
-## Frontend Setup
-
-Install frontend dependencies:
+### Start Frontend
 
 ```bash
 cd frontend
-npm install
-```
-
-Run the frontend:
-
-```bash
 npm run dev
 ```
 
@@ -128,7 +126,7 @@ http://localhost:3000
 
 ## Environment Variables
 
-Create the following file:
+Create:
 
 ```text
 frontend/.env.local
@@ -142,76 +140,70 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ---
 
-## Model Files
+## Authentication
 
-Place trained model files inside:
-
-```text
-backend/models/
-```
-
-Required files:
-
-* image_model.pth
-* video_model.pth
-* audio_model.pth
+The application uses Firebase Authentication for secure user login and account management.
 
 ---
 
-## API Endpoints
+## GitHub Repository
 
-### Image Detection
+https://github.com/Addddiii/Fake-Image-Video-Audio-Detector
 
-```http
-POST /predict/image
-```
+---
 
-### Video Detection
+## Deployed Application
 
-```http
-POST /predict/video
-```
+The application is not currently deployed online. It can be run locally using the backend and frontend setup instructions above.
 
-### Audio Detection
+---
 
-```http
-POST /predict/audio
-```
+## Credential Information
+
+The application uses Firebase Authentication for user login and account management.
+
+Firebase credentials are not included in this submission for security reasons. To configure Firebase independently, create a Firebase project and place the Firebase service account credentials file in:
+
+backend/firebase-credentials.json
+
+---
+
+## Data Management Information
+
+### Database Type
+
+No external database is used.
+
+### Data Storage
+
+User scan history is stored in browser local storage.
 
 ### Authentication
 
-```http
-POST /auth/verify
-GET  /auth/me
-```
+Firebase Authentication.
 
-### Health Check
+### Cloud Database
 
-```http
-GET /health
-```
+Not applicable.
 
----
+### Connection Information
 
-## Firebase Setup
-
-Place the Firebase credentials file inside:
-
-```text
-backend/firebase-credentials.json
-```
-
-The credentials file is used by the backend to verify authenticated user tokens.
-
-**Important:** Do not commit Firebase credentials to GitHub.
+Not applicable.
 
 ---
 
-## FFmpeg
+## Release Notes
 
-FFmpeg may be required on the backend machine for certain audio and video formats such as `.m4a`, `.mov`, `.mkv`, and `.webm`.
+### Version 1.0
 
-End users accessing the website do not need to install FFmpeg.
+* Implemented image deepfake detection
+* Implemented video deepfake detection
+* Implemented audio deepfake detection
+* Integrated Firebase authentication
+* Added scan history functionality
+* Added dashboard analytics and visualisations
+* Completed FastAPI backend integration
+* Completed Next.js frontend interface
 
 ---
 
@@ -254,4 +246,4 @@ End users accessing the website do not need to install FFmpeg.
 
 ## Summary
 
-This project demonstrates a practical application of machine learning for detecting AI-generated media. By integrating image, video, and audio analysis into a single platform, the system provides users with an accessible tool for identifying potentially manipulated content and exploring the challenges posed by modern generative AI technologies.
+This project demonstrates a practical application of machine learning for detecting AI-generated media. By integrating image, video, and audio analysis into a single platform, the system provides users with an accessible tool for identifying manipulated content and understanding the challenges posed by modern generative AI technologies.
